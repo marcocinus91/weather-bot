@@ -80,7 +80,7 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [x] Logica decisionale (suggerimento pratico: ombrello, corsa)
 - [x] Indicatore affidabilità previsione
 - [x] Gestione errori robusta
-- [ ] Deploy su Railway
+- [x] Deploy su Railway
 
 ## Analisi critica (pre-deploy)
 
@@ -102,9 +102,10 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [ ] Cache in-memory (TTL 5-10 min) su geocoding/forecast per ridurre chiamate a Open-Meteo
 - [ ] Gestione dedicata delle risposte 429 (rate limit) di Open-Meteo
 - [ ] Logging più strutturato
+- [ ] Contesto temporale: permettere all'utente di chiedere "oggi pomeriggio", "domani mattina", ecc. invece di rispondere solo sul meteo attuale (importante per il target runner/outdoor)
+- [ ] Comando `/help`: spiegare all'utente cosa può chiedere al bot oltre al nome della città
+- [ ] Rate limiting: evitare che un utente possa spammare richieste e martellare l'API Open-Meteo
 
 ## Prossimi step
 
-1. Risolvere i punti bloccanti (build, webhook secret, bot.catch)
-2. Deploy su Railway con configurazione webhook produzione
-3. Affrontare i punti "da sistemare a breve" e i miglioramenti futuri
+1. Affrontare i "Miglioramenti futuri" (cache, gestione 429, logging strutturato, contesto temporale, /help, rate limiting)

@@ -1,13 +1,47 @@
 import { Bot, webhookCallback } from "grammy";
 import express from "express";
 import "dotenv/config";
-import { getCoordinates, getWeather, WeatherServiceError, Location } from "./weather";
+import {
+  getCoordinates,
+  getWeather,
+  WeatherServiceError,
+  Location,
+} from "./weather";
 import {
   describeWeatherCode,
   getUmbrellaAdvice,
   getRunningAdvice,
   getReliability,
 } from "./decision";
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 10;
+
+const requestLog = new Map<number, number[]>();
+
+function isRateLimited(userId: number): boolean {
+  const now = Date.now();
+  const timestamps = (requestLog.get(userId) ?? []).filter(
+    (t) => now - t < RATE_LIMIT_WINDOW_MS,
+  );
+
+  timestamps.push(now);
+  requestLog.set(userId, timestamps);
+
+  return timestamps.length > RATE_LIMIT_MAX_REQUESTS;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, timestamps] of requestLog) {
+    const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      requestLog.delete(userId);
+    } else {
+      requestLog.set(userId, recent);
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS);
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
@@ -20,9 +54,36 @@ bot.catch((err) => {
   );
 });
 
+bot.use(async (ctx, next) => {
+  const userId = ctx.from?.id;
+
+  if (userId && isRateLimited(userId)) {
+    await ctx.reply(
+      "Stai inviando troppe richieste. Aspetta un minuto e riprova.",
+    );
+    return;
+  }
+
+  await next();
+});
+
 bot.command("start", (ctx) => {
   ctx.reply(
-    "Ciao! Sono il tuo assistente meteo. Scrivimi una città per sapere che tempo fa.",
+    "Ciao! Sono il tuo assistente meteo. Scrivimi una città per sapere che tempo fa.\nScrivi /help per saperne di più.",
+  );
+});
+
+bot.command("help", (ctx) => {
+  ctx.reply(
+    "Ecco cosa posso fare:\n\n" +
+      '📍 Scrivimi il nome di una città (es. "Milano" o "Milano, Italia") e ti dico:\n' +
+      "  • temperatura e condizioni attuali\n" +
+      "  • se ti serve l'ombrello ☂️\n" +
+      "  • se è una buona giornata per correre 🏃\n" +
+      "  • quanto è affidabile la previsione 📊\n\n" +
+      "Comandi disponibili:\n" +
+      "/start — messaggio di benvenuto\n" +
+      "/help — questo messaggio",
   );
 });
 
@@ -30,7 +91,10 @@ function formatLocation(loc: Location): string {
   return [loc.name, loc.admin1, loc.country].filter(Boolean).join(", ");
 }
 
-function findAmbiguousAlternatives(best: Location, alternatives: Location[]): Location[] {
+function findAmbiguousAlternatives(
+  best: Location,
+  alternatives: Location[],
+): Location[] {
   return alternatives.filter(
     (alt) => alt.country !== best.country || alt.admin1 !== best.admin1,
   );
@@ -45,7 +109,9 @@ bot.on("message:text", async (ctx) => {
   }
 
   if (city.length > 80) {
-    await ctx.reply("Il nome della città sembra troppo lungo. Riprova con un nome più breve.");
+    await ctx.reply(
+      "Il nome della città sembra troppo lungo. Riprova con un nome più breve.",
+    );
     return;
   }
 
@@ -92,6 +158,13 @@ bot.on("message:text", async (ctx) => {
       await ctx.reply(
         "Il servizio meteo sta impiegando troppo tempo a rispondere. Riprova tra poco.",
       );
+    } else if (
+      err instanceof WeatherServiceError &&
+      err.code === "RATE_LIMITED"
+    ) {
+      await ctx.reply(
+        "Il servizio meteo è momentaneamente sovraccarico. Riprova tra qualche minuto.",
+      );
     } else if (err instanceof WeatherServiceError && err.code === "NETWORK") {
       await ctx.reply(
         "Il servizio meteo non è raggiungibile al momento. Riprova tra qualche minuto.",
@@ -108,7 +181,9 @@ bot.on("message:text", async (ctx) => {
 // Va registrato DOPO bot.on("message:text") perché grammY ferma la
 // catena se un handler precedente ha già gestito l'update.
 bot.on("message", async (ctx) => {
-  await ctx.reply("Posso rispondere solo a messaggi di testo con il nome di una città.");
+  await ctx.reply(
+    "Posso rispondere solo a messaggi di testo con il nome di una città.",
+  );
 });
 
 // Setup Express + webhook
@@ -126,6 +201,13 @@ app.use(
     secretToken: process.env.WEBHOOK_SECRET,
   }),
 );
+
+bot.api
+  .setMyCommands([
+    { command: "start", description: "Messaggio di benvenuto" },
+    { command: "help", description: "Cosa posso fare" },
+  ])
+  .catch((err) => console.error("Errore setMyCommands", err));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

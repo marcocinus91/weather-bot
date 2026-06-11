@@ -13,7 +13,7 @@ function sleep(ms: number): Promise<void> {
 
 // --- Errori tipizzati ---
 
-export type WeatherErrorCode = "TIMEOUT" | "NETWORK" | "UNKNOWN";
+export type WeatherErrorCode = "TIMEOUT" | "NETWORK" | "RATE_LIMITED" | "UNKNOWN";
 
 export class WeatherServiceError extends Error {
   constructor(
@@ -30,6 +30,9 @@ function classifyError(err: unknown): WeatherServiceError {
   if (axios.isAxiosError(err)) {
     if (err.code === "ECONNABORTED") {
       return new WeatherServiceError("TIMEOUT", "Richiesta scaduta", err);
+    }
+    if (err.response?.status === 429) {
+      return new WeatherServiceError("RATE_LIMITED", "Limite di richieste raggiunto", err);
     }
     if (
       err.code === "ECONNRESET" ||
@@ -96,6 +99,10 @@ export interface GeocodingResult {
 export async function getCoordinates(
   city: string,
 ): Promise<GeocodingResult | null> {
+  const cacheKey = city.trim().toLowerCase();
+  const cached = geocodingCache.get(cacheKey);
+  if (cached) return cached;
+
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
     city,
   )}&count=5&language=it&format=json`;
@@ -112,10 +119,13 @@ export async function getCoordinates(
     longitude: r.longitude,
   });
 
-  return {
+  const result: GeocodingResult = {
     location: toLocation(results[0]),
     alternatives: results.slice(1).map(toLocation),
-  };
+  }
+
+  geocodingCache.set(cacheKey, result);
+  return result;
 }
 
 // --- Forecast ---
@@ -147,6 +157,10 @@ export async function getWeather(
   lat: number,
   lon: number,
 ): Promise<WeatherData> {
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  const cached = forecastCache.get(cacheKey);
+  if (cached) return cached;
+
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,precipitation,weathercode,windspeed_10m` +
@@ -162,7 +176,7 @@ export async function getWeather(
       ? data.hourly.precipitation_probability[currentHourIndex]
       : 0;
 
-  return {
+  const result: WeatherData = {
     temperature: data.current.temperature_2m,
     precipitation: data.current.precipitation,
     weatherCode: data.current.weathercode,
@@ -173,6 +187,41 @@ export async function getWeather(
         time,
         probability: data.hourly.precipitation_probability[i],
       }))
-      .slice(currentHourIndex >= 0 ? currentHourIndex : 0),
+      .slice(currentHourIndex >= 0 ? currentHourIndex : 0)
+  }
+
+  forecastCache.set(cacheKey, result);
+  return result;
+}
+
+// --- Cache in-memory con TTL ---
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+function createCache<T>(ttlMs: number) {
+  const store = new Map<string, CacheEntry<T>>();
+
+  return {
+    get(key: string): T | undefined {
+      const entry = store.get(key);
+      if (!entry) return undefined;
+      if (Date.now() > entry.expiresAt) {
+        store.delete(key);
+        return undefined;
+      }
+      return entry.value;
+    },
+    set(key: string, value: T): void {
+      store.set(key, { value, expiresAt: Date.now() + ttlMs });
+    },
   };
 }
+
+const GEOCODING_TTL_MS = 24 * 60 * 60 * 1000;
+const FORECAST_TTL_MS = 10 * 60 * 1000;
+
+const geocodingCache = createCache<GeocodingResult>(GEOCODING_TTL_MS);
+const forecastCache = createCache<WeatherData>(FORECAST_TTL_MS);
