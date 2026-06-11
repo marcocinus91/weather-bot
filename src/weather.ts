@@ -1,6 +1,9 @@
 import axios from "axios";
+import https from "https";
 
-const FETCH_TIMEOUT_MS = 8000;
+const httpsAgent = new https.Agent({ keepAlive: false });
+
+const FETCH_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 1;
 const RETRY_DELAY_MS = 300;
 
@@ -13,7 +16,7 @@ async function getJson<T>(url: string): Promise<T> {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const res = await axios.get<T>(url, { timeout: FETCH_TIMEOUT_MS });
+            const res = await axios.get<T>(url, { timeout: FETCH_TIMEOUT_MS, httpsAgent });
             return res.data;
         } catch (err) {
             lastError = err;
@@ -110,6 +113,6 @@ export async function getWeather(lat: number, lon: number): Promise<WeatherData>
         hourlyProbabilities: data.hourly.time.map((time, i) => ({
             time,
             probability: data.hourly.precipitation_probability[i],
-        })),
+        })).slice(currentHourIndex >= 0 ? currentHourIndex : 0),
     };
 }

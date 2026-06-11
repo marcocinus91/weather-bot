@@ -77,14 +77,12 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [x] Webhook funzionante
 - [x] Integrazione Open-Meteo (geocoding + forecast)
 - [x] Risposta meteo via bot Telegram (temperatura, precipitazioni, vento, probabilità pioggia)
-- [ ] Logica decisionale (suggerimento pratico)
-- [ ] Indicatore affidabilità previsione
+- [x] Logica decisionale (suggerimento pratico: ombrello, corsa)
+- [x] Indicatore affidabilità previsione
 - [ ] Gestione errori robusta
 - [ ] Deploy su Railway
 
 ## Prossimi step
 
-1. Aggiungere la logica decisionale che traduce i dati meteo in suggerimenti pratici
-2. Implementare un indicatore di affidabilità semplice basato sul confronto tra più fasce orarie
-3. Gestire i casi limite (città ambigue, API non disponibile, timeout)
-4. Deploy su Railway con configurazione webhook produzione
+1. Gestire i casi limite (città ambigue, API non disponibile, timeout)
+2. Deploy su Railway con configurazione webhook produzione
