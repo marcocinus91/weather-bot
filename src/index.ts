@@ -1,4 +1,4 @@
-import { Bot, webhookCallback } from "grammy";
+import { Bot, GrammyError, InlineKeyboard, webhookCallback } from "grammy";
 import express from "express";
 import "dotenv/config";
 import {
@@ -31,6 +31,13 @@ const PERIOD_LABELS: Record<DayPeriod, string> = {
   notte: "notte",
 };
 const ALL_PERIODS: DayPeriod[] = ["mattina", "pomeriggio", "sera", "notte"];
+const PERIOD_CODES: Record<DayPeriod, string> = { mattina: "m", pomeriggio: "p", sera: "s", notte: "n" };
+const PERIOD_FROM_CODE: Record<string, DayPeriod> = { m: "mattina", p: "pomeriggio", s: "sera", n: "notte" };
+
+type ReportKind =
+  | { type: "current" }
+  | { type: "period"; dayOffset: DayOffset; period: DayPeriod }
+  | { type: "overview"; dayOffset: DayOffset };
 
 function formatCurrentReport(location: Location, weather: WeatherData): string {
   const description = describeWeatherCode(weather.weatherCode);
@@ -91,6 +98,24 @@ function formatDayOverview(
   }
 
   return `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n${lines.join("\n")}`;
+}
+
+function buildRefreshKeyboard(location: Location, kind: ReportKind): InlineKeyboard {
+  const coords = `${location.latitude.toFixed(4)},${location.longitude.toFixed(4)}`;
+  const name = location.name;
+
+  let action: string;
+  if (kind.type === "current") {
+    action = `r:c:${coords}:${name}`;
+  } else if (kind.type === "period") {
+    action = `r:p:${coords}:${kind.dayOffset}${PERIOD_CODES[kind.period]}:${name}`;
+  } else {
+    action = `r:o:${coords}:${kind.dayOffset}:${name}`;
+  }
+
+  return new InlineKeyboard()
+    .text("🔄 Aggiorna", action)
+    .text("📍 Cambia città", "cc");
 }
 
 const requestLog = new Map<number, number[]>();
@@ -230,12 +255,18 @@ bot.on("message:text", async (ctx) => {
     const weather = await getWeather(location.latitude, location.longitude);
 
     if (!time) {
-      await ctx.reply(formatCurrentReport(location, weather), { parse_mode: "MarkdownV2" });
+      await ctx.reply(formatCurrentReport(location, weather), {
+        parse_mode: "MarkdownV2",
+        reply_markup: buildRefreshKeyboard(location, { type: "current" }),
+      });
       return;
     }
 
     if (!time.period) {
-      await ctx.reply(formatDayOverview(location, weather, time.dayOffset), { parse_mode: "MarkdownV2" });
+      await ctx.reply(formatDayOverview(location, weather, time.dayOffset), {
+        parse_mode: "MarkdownV2",
+        reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset: time.dayOffset }),
+      });
       return;
     }
 
@@ -250,7 +281,10 @@ bot.on("message:text", async (ctx) => {
       return;
     }
 
-    await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period), { parse_mode: "MarkdownV2" });
+    await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildRefreshKeyboard(location, { type: "period", dayOffset, period }),
+    });
   } catch (err) {
     logger.error(
       { err, userId: ctx.from?.id, city },
@@ -278,6 +312,92 @@ bot.on("message:text", async (ctx) => {
       );
     }
   }
+});
+
+function isNotModifiedError(err: unknown): boolean {
+  return err instanceof GrammyError && err.description.includes("message is not modified");
+}
+
+bot.callbackQuery(/^r:c:(-?\d+\.\d+),(-?\d+\.\d+):(.+)$/, async (ctx) => {
+  const [, latStr, lonStr, name] = ctx.match;
+  const lat = Number(latStr);
+  const lon = Number(lonStr);
+  const location: Location = { name, country: "", latitude: lat, longitude: lon };
+
+  try {
+    const weather = await getWeather(lat, lon);
+    await ctx.editMessageText(formatCurrentReport(location, weather), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildRefreshKeyboard(location, { type: "current" }),
+    });
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    if (isNotModifiedError(err)) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh meteo corrente");
+    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
+  }
+});
+
+bot.callbackQuery(/^r:p:(-?\d+\.\d+),(-?\d+\.\d+):(\d)([mpsn]):(.+)$/, async (ctx) => {
+  const [, latStr, lonStr, dayOffsetStr, periodCode, name] = ctx.match;
+  const lat = Number(latStr);
+  const lon = Number(lonStr);
+  const dayOffset = Number(dayOffsetStr) as DayOffset;
+  const period = PERIOD_FROM_CODE[periodCode];
+  const location: Location = { name, country: "", latitude: lat, longitude: lon };
+
+  try {
+    const weather = await getWeather(lat, lon);
+    const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
+    if (!forecast) {
+      await ctx.answerCallbackQuery({ text: "Previsione non più disponibile.", show_alert: true });
+      return;
+    }
+    await ctx.editMessageText(formatPeriodReport(location, forecast, dayOffset, period), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildRefreshKeyboard(location, { type: "period", dayOffset, period }),
+    });
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    if (isNotModifiedError(err)) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh meteo per fascia");
+    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
+  }
+});
+
+bot.callbackQuery(/^r:o:(-?\d+\.\d+),(-?\d+\.\d+):(\d):(.+)$/, async (ctx) => {
+  const [, latStr, lonStr, dayOffsetStr, name] = ctx.match;
+  const lat = Number(latStr);
+  const lon = Number(lonStr);
+  const dayOffset = Number(dayOffsetStr) as DayOffset;
+  const location: Location = { name, country: "", latitude: lat, longitude: lon };
+
+  try {
+    const weather = await getWeather(lat, lon);
+    await ctx.editMessageText(formatDayOverview(location, weather, dayOffset), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset }),
+    });
+    await ctx.answerCallbackQuery();
+  } catch (err) {
+    if (isNotModifiedError(err)) {
+      await ctx.answerCallbackQuery();
+      return;
+    }
+    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh panoramica giornata");
+    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
+  }
+});
+
+bot.callbackQuery("cc", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Scrivimi il nome della nuova città.");
 });
 
 // Fallback per messaggi non testuali (foto, sticker, vocali, ecc.)
