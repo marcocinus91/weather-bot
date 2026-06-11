@@ -94,6 +94,7 @@ export interface Location {
 export interface GeocodingResult {
   location: Location;
   alternatives: Location[];
+  disambiguated: boolean;
 }
 
 export async function getCoordinates(
@@ -103,8 +104,13 @@ export async function getCoordinates(
   const cached = geocodingCache.get(cacheKey);
   if (cached) return cached;
 
+  // L'utente potrebbe aver specificato "Città, Regione, Paese" per disambiguare
+  // (è il formato che suggeriamo noi stessi). L'API di geocoding cerca solo per
+  // nome città, quindi interroghiamo solo con la prima parte.
+  const [namePart, ...detailParts] = city.split(",").map((s) => s.trim());
+
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-    city,
+    namePart,
   )}&count=5&language=it&format=json`;
 
   const data = await getJson<GeocodingResponse>(url);
@@ -119,10 +125,30 @@ export async function getCoordinates(
     longitude: r.longitude,
   });
 
-  const result: GeocodingResult = {
-    location: toLocation(results[0]),
-    alternatives: results.slice(1).map(toLocation),
+  // Se l'utente ha indicato regione/paese, scegliamo il risultato che
+  // corrisponde a quei dettagli, così non gli richiediamo di nuovo di
+  // disambiguare la stessa città.
+  let bestIndex = 0;
+  let disambiguated = false;
+
+  if (detailParts.length > 0) {
+    const details = detailParts.join(" ").toLowerCase();
+    const found = results.findIndex((r) =>
+      [r.admin1, r.country].some(
+        (field) => field && details.includes(field.toLowerCase()),
+      ),
+    );
+    if (found >= 0) {
+      bestIndex = found;
+      disambiguated = true;
+    }
   }
+
+  const result: GeocodingResult = {
+    location: toLocation(results[bestIndex]),
+    alternatives: results.filter((_, i) => i !== bestIndex).map(toLocation),
+    disambiguated,
+  };
 
   geocodingCache.set(cacheKey, result);
   return result;

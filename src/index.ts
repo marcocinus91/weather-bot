@@ -209,8 +209,10 @@ bot.on("message:text", async (ctx) => {
       return;
     }
 
-    const { location, alternatives } = geocoding;
-    const ambiguous = findAmbiguousAlternatives(location, alternatives);
+    const { location, alternatives, disambiguated } = geocoding;
+    const ambiguous = disambiguated
+      ? []
+      : findAmbiguousAlternatives(location, alternatives);
 
     if (ambiguous.length > 0) {
       const options = [location, ...ambiguous.slice(0, 2)]
