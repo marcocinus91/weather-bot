@@ -79,10 +79,9 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [x] Risposta meteo via bot Telegram (temperatura, precipitazioni, vento, probabilità pioggia)
 - [x] Logica decisionale (suggerimento pratico: ombrello, corsa)
 - [x] Indicatore affidabilità previsione
-- [ ] Gestione errori robusta
+- [x] Gestione errori robusta
 - [ ] Deploy su Railway
 
 ## Prossimi step
 
-1. Gestire i casi limite (città ambigue, API non disponibile, timeout)
-2. Deploy su Railway con configurazione webhook produzione
+1. Deploy su Railway con configurazione webhook produzione

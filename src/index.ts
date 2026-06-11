@@ -1,7 +1,7 @@
 import { Bot, webhookCallback } from "grammy";
 import express from "express";
 import "dotenv/config";
-import { getCoordinates, getWeather } from "./weather";
+import { getCoordinates, getWeather, WeatherServiceError, Location } from "./weather";
 import {
   describeWeatherCode,
   getUmbrellaAdvice,
@@ -11,22 +11,56 @@ import {
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
-// Risponde al comando /start
 bot.command("start", (ctx) => {
   ctx.reply(
     "Ciao! Sono il tuo assistente meteo. Scrivimi una città per sapere che tempo fa.",
   );
 });
 
-// Risponde a qualsiasi messaggio di testo
+function formatLocation(loc: Location): string {
+  return [loc.name, loc.admin1, loc.country].filter(Boolean).join(", ");
+}
+
+// Considera "ambigua" una città solo se gli altri risultati indicano
+// luoghi davvero diversi (paese o regione diversi dal primo risultato).
+function findAmbiguousAlternatives(best: Location, alternatives: Location[]): Location[] {
+  return alternatives.filter(
+    (alt) => alt.country !== best.country || alt.admin1 !== best.admin1,
+  );
+}
+
 bot.on("message:text", async (ctx) => {
   const city = ctx.message.text.trim();
 
-  try {
-    const location = await getCoordinates(city);
+  if (!city || city.startsWith("/")) {
+    await ctx.reply("Scrivimi il nome di una città per sapere che tempo fa.");
+    return;
+  }
 
-    if (!location) {
+  if (city.length > 80) {
+    await ctx.reply("Il nome della città sembra troppo lungo. Riprova con un nome più breve.");
+    return;
+  }
+
+  try {
+    const geocoding = await getCoordinates(city);
+
+    if (!geocoding) {
       await ctx.reply(`Non ho trovato "${city}". Controlla il nome e riprova.`);
+      return;
+    }
+
+    const { location, alternatives } = geocoding;
+    const ambiguous = findAmbiguousAlternatives(location, alternatives);
+
+    if (ambiguous.length > 0) {
+      const options = [location, ...ambiguous.slice(0, 2)]
+        .map((loc) => `• ${formatLocation(loc)}`)
+        .join("\n");
+
+      await ctx.reply(
+        `Ho trovato più città con questo nome. Specifica meglio (es. "Milano, Italia"):\n${options}`,
+      );
       return;
     }
 
@@ -36,12 +70,8 @@ bot.on("message:text", async (ctx) => {
     const running = getRunningAdvice(weather);
     const reliability = getReliability(weather);
 
-    const locationLabel = [location.name, location.admin1, location.country]
-      .filter(Boolean)
-      .join(", ");
-
     await ctx.reply(
-      `📍 ${locationLabel}\n` +
+      `📍 ${formatLocation(location)}\n` +
         `${description}, ${weather.temperature}°C\n\n` +
         `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
         `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
@@ -51,9 +81,13 @@ bot.on("message:text", async (ctx) => {
   } catch (err) {
     console.error("Errore nel recupero meteo:", err);
 
-    if (err instanceof Error && err.name === "AbortError") {
+    if (err instanceof WeatherServiceError && err.code === "TIMEOUT") {
       await ctx.reply(
         "Il servizio meteo sta impiegando troppo tempo a rispondere. Riprova tra poco.",
+      );
+    } else if (err instanceof WeatherServiceError && err.code === "NETWORK") {
+      await ctx.reply(
+        "Il servizio meteo non è raggiungibile al momento. Riprova tra qualche minuto.",
       );
     } else {
       await ctx.reply(
