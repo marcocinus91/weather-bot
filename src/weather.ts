@@ -1,10 +1,10 @@
 import axios from "axios";
 import https from "https";
 
-const httpsAgent = new https.Agent({ keepAlive: false });
+const httpsAgent = new https.Agent({ keepAlive: false, family: 4 });
 
 const FETCH_TIMEOUT_MS = 15000;
-const MAX_RETRIES = 1;
+const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 300;
 
 function sleep(ms: number): Promise<void> {
@@ -98,7 +98,7 @@ export async function getCoordinates(
 ): Promise<GeocodingResult | null> {
   const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
     city,
-  )}&count=1&language=it&format=json`;
+  )}&count=5&language=it&format=json`;
 
   const data = await getJson<GeocodingResponse>(url);
   const results = data.results;

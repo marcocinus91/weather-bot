@@ -11,6 +11,15 @@ import {
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
+// Gestore di errori globale: cattura tutto ciò che sfugge ai try/catch
+// nei singoli handler, evitando unhandled rejection / crash del processo.
+bot.catch((err) => {
+  console.error(
+    `Errore non gestito durante l'elaborazione dell'update ${err.ctx.update.update_id}:`,
+    err.error,
+  );
+});
+
 bot.command("start", (ctx) => {
   ctx.reply(
     "Ciao! Sono il tuo assistente meteo. Scrivimi una città per sapere che tempo fa.",
@@ -21,8 +30,6 @@ function formatLocation(loc: Location): string {
   return [loc.name, loc.admin1, loc.country].filter(Boolean).join(", ");
 }
 
-// Considera "ambigua" una città solo se gli altri risultati indicano
-// luoghi davvero diversi (paese o regione diversi dal primo risultato).
 function findAmbiguousAlternatives(best: Location, alternatives: Location[]): Location[] {
   return alternatives.filter(
     (alt) => alt.country !== best.country || alt.admin1 !== best.admin1,
@@ -97,10 +104,28 @@ bot.on("message:text", async (ctx) => {
   }
 });
 
+// Fallback per messaggi non testuali (foto, sticker, vocali, ecc.)
+// Va registrato DOPO bot.on("message:text") perché grammY ferma la
+// catena se un handler precedente ha già gestito l'update.
+bot.on("message", async (ctx) => {
+  await ctx.reply("Posso rispondere solo a messaggi di testo con il nome di una città.");
+});
+
 // Setup Express + webhook
 const app = express();
 app.use(express.json());
-app.use(`/webhook`, webhookCallback(bot, "express", { timeoutMilliseconds: 25000 }));
+
+app.get("/", (_req, res) => {
+  res.send("OK");
+});
+
+app.use(
+  `/webhook`,
+  webhookCallback(bot, "express", {
+    timeoutMilliseconds: 25000,
+    secretToken: process.env.WEBHOOK_SECRET,
+  }),
+);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

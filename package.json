@@ -2,6 +2,9 @@
   "name": "weather-bot",
   "version": "1.0.0",
   "main": "index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "ts-node src/index.ts",
     "build": "tsc",

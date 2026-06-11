@@ -82,6 +82,29 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [x] Gestione errori robusta
 - [ ] Deploy su Railway
 
+## Analisi critica (pre-deploy)
+
+### Bloccanti
+
+- [x] `npm run build` falliva (errore TS7016 su `node-fetch`, dipendenza interna di grammY) — risolto con `skipLibCheck: true` in `tsconfig.json`
+- [x] Endpoint `/webhook` pubblico senza autenticazione — risolto con `secret_token` di Telegram + opzione `secretToken` di `webhookCallback`
+- [x] Manca un gestore di errori globale (`bot.catch`) — aggiunto in `index.ts`
+
+### Da sistemare a breve
+
+- [x] Nessuna route di health-check (`GET /`) per monitoraggio Railway
+- [x] Messaggi non testuali (foto, sticker, vocali...) ignorati senza risposta
+- [x] `package.json` senza `engines.node` — rischio mismatch versione Node tra locale e Railway
+- [x] Manca `.env.example` con le variabili richieste per il deploy
+
+### Miglioramenti futuri
+
+- [ ] Cache in-memory (TTL 5-10 min) su geocoding/forecast per ridurre chiamate a Open-Meteo
+- [ ] Gestione dedicata delle risposte 429 (rate limit) di Open-Meteo
+- [ ] Logging più strutturato
+
 ## Prossimi step
 
-1. Deploy su Railway con configurazione webhook produzione
+1. Risolvere i punti bloccanti (build, webhook secret, bot.catch)
+2. Deploy su Railway con configurazione webhook produzione
+3. Affrontare i punti "da sistemare a breve" e i miglioramenti futuri
