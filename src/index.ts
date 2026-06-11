@@ -18,6 +18,7 @@ import {
   PeriodForecast,
 } from "./decision";
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
+import { logger } from "./logger";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
@@ -122,9 +123,9 @@ const bot = new Bot(process.env.BOT_TOKEN!);
 // Gestore di errori globale: cattura tutto ciò che sfugge ai try/catch
 // nei singoli handler, evitando unhandled rejection / crash del processo.
 bot.catch((err) => {
-  console.error(
-    `Errore non gestito durante l'elaborazione dell'update ${err.ctx.update.update_id}:`,
-    err.error,
+  logger.error(
+    { updateId: err.ctx.update.update_id, err: err.error },
+    "Errore non gestito durante l'elaborazione dell'update",
   );
 });
 
@@ -247,7 +248,10 @@ bot.on("message:text", async (ctx) => {
 
     await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period));
   } catch (err) {
-    console.error("Errore nel recupero meteo:", err);
+    logger.error(
+      { err, userId: ctx.from?.id, city },
+      "Errore nel recupero meteo",
+    );
 
     if (err instanceof WeatherServiceError && err.code === "TIMEOUT") {
       await ctx.reply(
@@ -302,9 +306,9 @@ bot.api
     { command: "start", description: "Messaggio di benvenuto" },
     { command: "help", description: "Cosa posso fare" },
   ])
-  .catch((err) => console.error("Errore setMyCommands", err));
+  .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server avviato sulla porta ${PORT}`);
+  logger.info({ port: PORT }, "Server avviato")
 });

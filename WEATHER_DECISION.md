@@ -104,8 +104,8 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 - [x] Comando `/help`: spiegare all'utente cosa può chiedere al bot oltre al nome della città
 - [x] Rate limiting: evitare che un utente possa spammare richieste e martellare l'API Open-Meteo
 - [x] Contesto temporale: l'utente può chiedere "oggi pomeriggio", "domani mattina", "stasera", ecc. (parser in `src/time.ts`, aggregazione per fascia oraria in `src/decision.ts`)
-- [ ] Logging più strutturato
+- [x] Logging più strutturato (pino, JSON in produzione / pretty-print in dev)
 
 ## Prossimi step
 
-1. Logging più strutturato
+Tutti i miglioramenti pianificati sono stati completati.
