@@ -157,6 +157,7 @@ export async function getCoordinates(
 // --- Forecast ---
 
 interface ForecastResponse {
+  utc_offset_seconds: number;
   current: {
     time: string;
     temperature_2m: number;
@@ -189,6 +190,7 @@ export interface WeatherData {
   weatherCode: number;
   windSpeed: number;
   precipitationProbability: number;
+  utcOffsetSeconds: number;
   hourly: HourlySnapshot[];
 }
 
@@ -233,6 +235,7 @@ export async function getWeather(
     weatherCode: data.current.weathercode,
     windSpeed: data.current.windspeed_10m,
     precipitationProbability: hourly[0]?.precipitationProbability ?? 0,
+    utcOffsetSeconds: data.utc_offset_seconds,
     hourly,
   }
 

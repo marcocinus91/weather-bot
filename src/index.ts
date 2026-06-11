@@ -19,6 +19,7 @@ import {
 } from "./decision";
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 import { logger } from "./logger";
+import { escapeMarkdownV2 } from "./format";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
@@ -39,11 +40,11 @@ function formatCurrentReport(location: Location, weather: WeatherData): string {
 
   return (
     `📍 ${formatLocation(location)}\n` +
-    `${description}, ${weather.temperature}°C\n\n` +
-    `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
-    `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
-    `📊 Affidabilità previsione: ${reliability.level} — ${reliability.reason}\n\n` +
-    `💨 Vento: ${weather.windSpeed} km/h | 🌧️ Precipitazioni: ${weather.precipitation} mm`
+    `${escapeMarkdownV2(description)}, *${weather.temperature}°C*\n\n` +
+    `☂️ Ombrello: *${umbrella.needed ? "sì" : "no"}* — ${escapeMarkdownV2(umbrella.reason)}\n` +
+    `🏃 Uscire/correre: *${running.recommended ? "consigliato" : "sconsigliato"}* — ${escapeMarkdownV2(running.reason)}\n` +
+    `📊 Affidabilità previsione: *${reliability.level}* — ${escapeMarkdownV2(reliability.reason)}\n\n` +
+    `💨 Vento: *${weather.windSpeed} km/h* \\| 🌧️ Precipitazioni: *${weather.precipitation} mm*`
   );
 }
 
@@ -62,11 +63,11 @@ function formatPeriodReport(
 
   return (
     `📍 ${formatLocation(location)} — ${label}\n` +
-    `${description}, ~${snapshot.temperature}°C\n\n` +
-    `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
-    `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
-    `📊 Affidabilità previsione: ${reliability.level} — ${reliability.reason}\n\n` +
-    `💨 Vento (max): ${snapshot.windSpeed} km/h | 🌧️ Precipitazioni (tot): ${snapshot.precipitation} mm`
+    `${escapeMarkdownV2(description)}, \\~${snapshot.temperature}°C\n\n` +
+    `☂️ Ombrello: *${umbrella.needed ? "sì" : "no"}* — ${escapeMarkdownV2(umbrella.reason)}\n` +
+    `🏃 Uscire/correre: *${running.recommended ? "consigliato" : "sconsigliato"}* — ${escapeMarkdownV2(running.reason)}\n` +
+    `📊 Affidabilità previsione: *${reliability.level}* — ${escapeMarkdownV2(reliability.reason)}\n\n` +
+    `💨 Vento \\(max\\): *${snapshot.windSpeed} km/h* \\| 🌧️ Precipitazioni \\(tot\\): *${snapshot.precipitation} mm*`
   );
 }
 
@@ -82,11 +83,11 @@ function formatDayOverview(
     const { snapshot } = forecast;
     const description = describeWeatherCode(snapshot.weatherCode);
     const umbrella = getUmbrellaAdvice(snapshot);
-    return `• ${PERIOD_LABELS[period]}: ${description}, ${snapshot.temperature}°C — ☂️ ${umbrella.needed ? "sì" : "no"}`;
+    return `• ${PERIOD_LABELS[period]}: ${escapeMarkdownV2(description)}, *${snapshot.temperature}°C* — ☂️ *${umbrella.needed ? "sì" : "no"}*`;
   }).filter((line): line is string => line !== null);
 
   if (lines.length === 0) {
-    return `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]}".`;
+    return `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]}"\\.`;
   }
 
   return `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n${lines.join("\n")}`;
@@ -167,7 +168,7 @@ bot.command("help", (ctx) => {
 });
 
 function formatLocation(loc: Location): string {
-  return [loc.name, loc.admin1, loc.country].filter(Boolean).join(", ");
+  return [loc.name, loc.admin1, loc.country].filter(Boolean).map((part) => escapeMarkdownV2(part as string)).join(", ");
 }
 
 function findAmbiguousAlternatives(
@@ -220,7 +221,8 @@ bot.on("message:text", async (ctx) => {
         .join("\n");
 
       await ctx.reply(
-        `Ho trovato più città con questo nome. Specifica meglio (es. "Milano, Italia"):\n${options}`,
+        `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
+        { parse_mode: "MarkdownV2" },
       );
       return;
     }
@@ -228,12 +230,12 @@ bot.on("message:text", async (ctx) => {
     const weather = await getWeather(location.latitude, location.longitude);
 
     if (!time) {
-      await ctx.reply(formatCurrentReport(location, weather));
+      await ctx.reply(formatCurrentReport(location, weather), { parse_mode: "MarkdownV2" });
       return;
     }
 
     if (!time.period) {
-      await ctx.reply(formatDayOverview(location, weather, time.dayOffset));
+      await ctx.reply(formatDayOverview(location, weather, time.dayOffset), { parse_mode: "MarkdownV2" });
       return;
     }
 
@@ -248,7 +250,7 @@ bot.on("message:text", async (ctx) => {
       return;
     }
 
-    await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period));
+    await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period), { parse_mode: "MarkdownV2" });
   } catch (err) {
     logger.error(
       { err, userId: ctx.from?.id, city },
