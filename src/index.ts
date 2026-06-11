@@ -40,11 +40,11 @@ function formatCurrentReport(location: Location, weather: WeatherData): string {
 
   return (
     `📍 ${formatLocation(location)}\n` +
-    `${escapeMarkdownV2(description)}, *${weather.temperature}°C*\n\n` +
+    `${escapeMarkdownV2(description)}, *${escapeMarkdownV2(String(weather.temperature))}°C*\n\n` +
     `☂️ Ombrello: *${umbrella.needed ? "sì" : "no"}* — ${escapeMarkdownV2(umbrella.reason)}\n` +
     `🏃 Uscire/correre: *${running.recommended ? "consigliato" : "sconsigliato"}* — ${escapeMarkdownV2(running.reason)}\n` +
     `📊 Affidabilità previsione: *${reliability.level}* — ${escapeMarkdownV2(reliability.reason)}\n\n` +
-    `💨 Vento: *${weather.windSpeed} km/h* \\| 🌧️ Precipitazioni: *${weather.precipitation} mm*`
+    `💨 Vento: *${escapeMarkdownV2(String(weather.windSpeed))} km/h* \\| 🌧️ Precipitazioni: *${escapeMarkdownV2(String(weather.precipitation))} mm*`
   );
 }
 
@@ -63,11 +63,11 @@ function formatPeriodReport(
 
   return (
     `📍 ${formatLocation(location)} — ${label}\n` +
-    `${escapeMarkdownV2(description)}, \\~${snapshot.temperature}°C\n\n` +
+    `${escapeMarkdownV2(description)}, \\~${escapeMarkdownV2(String(snapshot.temperature))}°C\n\n` +
     `☂️ Ombrello: *${umbrella.needed ? "sì" : "no"}* — ${escapeMarkdownV2(umbrella.reason)}\n` +
     `🏃 Uscire/correre: *${running.recommended ? "consigliato" : "sconsigliato"}* — ${escapeMarkdownV2(running.reason)}\n` +
     `📊 Affidabilità previsione: *${reliability.level}* — ${escapeMarkdownV2(reliability.reason)}\n\n` +
-    `💨 Vento \\(max\\): *${snapshot.windSpeed} km/h* \\| 🌧️ Precipitazioni \\(tot\\): *${snapshot.precipitation} mm*`
+    `💨 Vento \\(max\\): *${escapeMarkdownV2(String(snapshot.windSpeed))} km/h* \\| 🌧️ Precipitazioni \\(tot\\): *${escapeMarkdownV2(String(snapshot.precipitation))} mm*`
   );
 }
 
@@ -83,7 +83,7 @@ function formatDayOverview(
     const { snapshot } = forecast;
     const description = describeWeatherCode(snapshot.weatherCode);
     const umbrella = getUmbrellaAdvice(snapshot);
-    return `• ${PERIOD_LABELS[period]}: ${escapeMarkdownV2(description)}, *${snapshot.temperature}°C* — ☂️ *${umbrella.needed ? "sì" : "no"}*`;
+    return `• ${PERIOD_LABELS[period]}: ${escapeMarkdownV2(description)}, *${escapeMarkdownV2(String(snapshot.temperature))}°C* — ☂️ *${umbrella.needed ? "sì" : "no"}*`;
   }).filter((line): line is string => line !== null);
 
   if (lines.length === 0) {
