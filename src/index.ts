@@ -5,6 +5,7 @@ import {
   getCoordinates,
   getWeather,
   WeatherServiceError,
+  WeatherData,
   Location,
 } from "./weather";
 import {
@@ -12,10 +13,83 @@ import {
   getUmbrellaAdvice,
   getRunningAdvice,
   getReliability,
+  getPeriodForecast,
+  getPeriodReliability,
+  PeriodForecast,
 } from "./decision";
+import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
+const DAY_LABELS: Record<DayOffset, string> = { 0: "oggi", 1: "domani" };
+const PERIOD_LABELS: Record<DayPeriod, string> = {
+  mattina: "mattina",
+  pomeriggio: "pomeriggio",
+  sera: "sera",
+  notte: "notte",
+};
+const ALL_PERIODS: DayPeriod[] = ["mattina", "pomeriggio", "sera", "notte"];
+
+function formatCurrentReport(location: Location, weather: WeatherData): string {
+  const description = describeWeatherCode(weather.weatherCode);
+  const umbrella = getUmbrellaAdvice(weather);
+  const running = getRunningAdvice(weather);
+  const reliability = getReliability(weather);
+
+  return (
+    `📍 ${formatLocation(location)}\n` +
+    `${description}, ${weather.temperature}°C\n\n` +
+    `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
+    `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
+    `📊 Affidabilità previsione: ${reliability.level} — ${reliability.reason}\n\n` +
+    `💨 Vento: ${weather.windSpeed} km/h | 🌧️ Precipitazioni: ${weather.precipitation} mm`
+  );
+}
+
+function formatPeriodReport(
+  location: Location,
+  forecast: PeriodForecast,
+  dayOffset: DayOffset,
+  period: DayPeriod,
+): string {
+  const { snapshot, hours } = forecast;
+  const description = describeWeatherCode(snapshot.weatherCode);
+  const umbrella = getUmbrellaAdvice(snapshot);
+  const running = getRunningAdvice(snapshot);
+  const reliability = getPeriodReliability(hours);
+  const label = `${DAY_LABELS[dayOffset]} ${PERIOD_LABELS[period]}`;
+
+  return (
+    `📍 ${formatLocation(location)} — ${label}\n` +
+    `${description}, ~${snapshot.temperature}°C\n\n` +
+    `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
+    `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
+    `📊 Affidabilità previsione: ${reliability.level} — ${reliability.reason}\n\n` +
+    `💨 Vento (max): ${snapshot.windSpeed} km/h | 🌧️ Precipitazioni (tot): ${snapshot.precipitation} mm`
+  );
+}
+
+function formatDayOverview(
+  location: Location,
+  weather: WeatherData,
+  dayOffset: DayOffset,
+): string {
+  const lines = ALL_PERIODS.map((period) => {
+    const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
+    if (!forecast) return null;
+
+    const { snapshot } = forecast;
+    const description = describeWeatherCode(snapshot.weatherCode);
+    const umbrella = getUmbrellaAdvice(snapshot);
+    return `• ${PERIOD_LABELS[period]}: ${description}, ${snapshot.temperature}°C — ☂️ ${umbrella.needed ? "sì" : "no"}`;
+  }).filter((line): line is string => line !== null);
+
+  if (lines.length === 0) {
+    return `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]}".`;
+  }
+
+  return `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n${lines.join("\n")}`;
+}
 
 const requestLog = new Map<number, number[]>();
 
@@ -83,7 +157,11 @@ bot.command("help", (ctx) => {
       "  • quanto è affidabile la previsione 📊\n\n" +
       "Comandi disponibili:\n" +
       "/start — messaggio di benvenuto\n" +
-      "/help — questo messaggio",
+      "/help — questo messaggio\n\n" +
+      "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
+      '  • "Milano stasera"\n' +
+      '  • "Roma domani mattina"\n' +
+      '  • "Torino domani" (panoramica dell\'intera giornata)\n\n',
   );
 });
 
@@ -101,17 +179,24 @@ function findAmbiguousAlternatives(
 }
 
 bot.on("message:text", async (ctx) => {
-  const city = ctx.message.text.trim();
+  const text = ctx.message.text.trim();
 
-  if (!city || city.startsWith("/")) {
+  if (!text || text.startsWith("/")) {
     await ctx.reply("Scrivimi il nome di una città per sapere che tempo fa.");
     return;
   }
 
-  if (city.length > 80) {
+  if (text.length > 80) {
     await ctx.reply(
-      "Il nome della città sembra troppo lungo. Riprova con un nome più breve.",
+      "Il messaggio sembra troppo lungo. Riprova con un testo più breve.",
     );
+    return;
+  }
+
+  const { city, time } = parseTimeContext(text);
+
+  if (!city) {
+    await ctx.reply("Scrivimi il nome di una città per sapere che tempo fa.");
     return;
   }
 
@@ -138,19 +223,29 @@ bot.on("message:text", async (ctx) => {
     }
 
     const weather = await getWeather(location.latitude, location.longitude);
-    const description = describeWeatherCode(weather.weatherCode);
-    const umbrella = getUmbrellaAdvice(weather);
-    const running = getRunningAdvice(weather);
-    const reliability = getReliability(weather);
 
-    await ctx.reply(
-      `📍 ${formatLocation(location)}\n` +
-        `${description}, ${weather.temperature}°C\n\n` +
-        `☂️ Ombrello: ${umbrella.needed ? "sì" : "no"} — ${umbrella.reason}\n` +
-        `🏃 Uscire/correre: ${running.recommended ? "consigliato" : "sconsigliato"} — ${running.reason}\n` +
-        `📊 Affidabilità previsione: ${reliability.level} — ${reliability.reason}\n\n` +
-        `💨 Vento: ${weather.windSpeed} km/h | 🌧️ Precipitazioni: ${weather.precipitation} mm`,
-    );
+    if (!time) {
+      await ctx.reply(formatCurrentReport(location, weather));
+      return;
+    }
+
+    if (!time.period) {
+      await ctx.reply(formatDayOverview(location, weather, time.dayOffset));
+      return;
+    }
+
+    const dayOffset = time.dayOffset;
+    const period = time.period;
+    const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
+
+    if (!forecast) {
+      await ctx.reply(
+        `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]} ${PERIOD_LABELS[period]}". Probabilmente è un orario già passato.`,
+      );
+      return;
+    }
+
+    await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period));
   } catch (err) {
     console.error("Errore nel recupero meteo:", err);
 

@@ -140,8 +140,21 @@ interface ForecastResponse {
   };
   hourly: {
     time: string[];
+    temperature_2m: number[];
+    precipitation: number[];
     precipitation_probability: number[];
+    weathercode: number[];
+    windspeed_10m: number[];
   };
+}
+
+export interface HourlySnapshot {
+  time: string;
+  temperature: number;
+  precipitation: number;
+  weatherCode: number;
+  windSpeed: number;
+  precipitationProbability: number;
 }
 
 export interface WeatherData {
@@ -150,7 +163,7 @@ export interface WeatherData {
   weatherCode: number;
   windSpeed: number;
   precipitationProbability: number;
-  hourlyProbabilities: { time: string; probability: number }[];
+  hourly: HourlySnapshot[];
 }
 
 export async function getWeather(
@@ -164,30 +177,37 @@ export async function getWeather(
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,precipitation,weathercode,windspeed_10m` +
-    `&hourly=precipitation_probability&timezone=auto&forecast_days=1`;
+    `&hourly=temperature_2m,precipitation,precipitation_probability,weathercode,windspeed_10m` +
+    `&timezone=auto&forecast_days=2`;
 
   const data = await getJson<ForecastResponse>(url);
 
   const currentHourIndex = data.hourly.time.findIndex(
     (t) => t === data.current.time,
   );
-  const currentProbability =
-    currentHourIndex >= 0
-      ? data.hourly.precipitation_probability[currentHourIndex]
-      : 0;
+  const startIndex = currentHourIndex >= 0 ? currentHourIndex : 0;
+
+  const hourly: HourlySnapshot[] = data.hourly.time
+    .slice(startIndex)
+    .map((time, i) => {
+      const idx = startIndex + i;
+      return {
+        time,
+        temperature: data.hourly.temperature_2m[idx],
+        precipitation: data.hourly.precipitation[idx],
+        weatherCode: data.hourly.weathercode[idx],
+        windSpeed: data.hourly.windspeed_10m[idx],
+        precipitationProbability: data.hourly.precipitation_probability[idx],
+      }
+    })
 
   const result: WeatherData = {
     temperature: data.current.temperature_2m,
     precipitation: data.current.precipitation,
     weatherCode: data.current.weathercode,
     windSpeed: data.current.windspeed_10m,
-    precipitationProbability: currentProbability,
-    hourlyProbabilities: data.hourly.time
-      .map((time, i) => ({
-        time,
-        probability: data.hourly.precipitation_probability[i],
-      }))
-      .slice(currentHourIndex >= 0 ? currentHourIndex : 0)
+    precipitationProbability: hourly[0]?.precipitationProbability ?? 0,
+    hourly,
   }
 
   forecastCache.set(cacheKey, result);

@@ -99,13 +99,13 @@ GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&curren
 
 ### Miglioramenti futuri
 
-- [ ] Cache in-memory (TTL 5-10 min) su geocoding/forecast per ridurre chiamate a Open-Meteo
-- [ ] Gestione dedicata delle risposte 429 (rate limit) di Open-Meteo
+- [x] Cache in-memory (TTL 5-10 min) su geocoding/forecast per ridurre chiamate a Open-Meteo
+- [x] Gestione dedicata delle risposte 429 (rate limit) di Open-Meteo
+- [x] Comando `/help`: spiegare all'utente cosa può chiedere al bot oltre al nome della città
+- [x] Rate limiting: evitare che un utente possa spammare richieste e martellare l'API Open-Meteo
+- [x] Contesto temporale: l'utente può chiedere "oggi pomeriggio", "domani mattina", "stasera", ecc. (parser in `src/time.ts`, aggregazione per fascia oraria in `src/decision.ts`)
 - [ ] Logging più strutturato
-- [ ] Contesto temporale: permettere all'utente di chiedere "oggi pomeriggio", "domani mattina", ecc. invece di rispondere solo sul meteo attuale (importante per il target runner/outdoor)
-- [ ] Comando `/help`: spiegare all'utente cosa può chiedere al bot oltre al nome della città
-- [ ] Rate limiting: evitare che un utente possa spammare richieste e martellare l'API Open-Meteo
 
 ## Prossimi step
 
-1. Affrontare i "Miglioramenti futuri" (cache, gestione 429, logging strutturato, contesto temporale, /help, rate limiting)
+1. Logging più strutturato
