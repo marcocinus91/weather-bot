@@ -26,7 +26,9 @@ function loadFromDisk(): Map<number, UserPrefs> {
 
 function saveToDisk(): void {
   fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
-  fs.writeFileSync(STORE_PATH, JSON.stringify(Object.fromEntries(prefs)));
+  const tmpPath = `${STORE_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(Object.fromEntries(prefs)));
+  fs.renameSync(tmpPath, STORE_PATH);
 }
 
 export function getUserPrefs(userId: number): UserPrefs | undefined {

@@ -340,13 +340,13 @@ bot.use(async (ctx, next) => {
 });
 
 bot.command("start", (ctx) => {
-  ctx.reply(
+  return ctx.reply(
     "Ciao! Sono il tuo assistente meteo. Scrivimi una città per sapere che tempo fa.\nScrivi /help per saperne di più.",
   );
 });
 
 bot.command("help", (ctx) => {
-  ctx.reply(
+  return ctx.reply(
     "Ecco cosa posso fare:\n\n" +
       '📍 Scrivimi il nome di una città (es. "Milano" o "Milano, Italia") e ti dico:\n' +
       "  • temperatura e condizioni attuali\n" +

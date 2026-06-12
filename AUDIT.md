@@ -61,8 +61,13 @@ Se `WEBHOOK_SECRET` non è impostato in produzione, `secretToken` è `undefined`
 
 ## 🟠 Media priorità
 
-### 3. Scrittura dello store non atomica → rischio corruzione/perdita dati
-**File:** [src/store.ts:27-30](src/store.ts#L27-L30)
+### 3. Scrittura dello store non atomica → rischio corruzione/perdita dati ✅ risolto
+**File:** [src/store.ts:27-32](src/store.ts#L27-L32)
+
+**Fix applicato:** `saveToDisk()` scrive prima su `user-prefs.json.tmp` e poi fa `renameSync` sul file finale. Il rename è atomico sullo stesso filesystem: se il processo viene killato durante la scrittura, `STORE_PATH` resta quello dell'ultimo salvataggio riuscito.
+
+<details>
+<summary>Descrizione originale del problema</summary>
 
 ```ts
 fs.writeFileSync(STORE_PATH, JSON.stringify(...));
@@ -72,10 +77,17 @@ La scrittura è diretta sul file finale. Se il processo crasha o viene killato (
 
 **Fix consigliato:** scrittura atomica con file temporaneo + `rename` (`fs.writeFileSync(tmp); fs.renameSync(tmp, STORE_PATH)`). Il `rename` su stesso filesystem è atomico. Opzionalmente fare backup del file precedente.
 
+</details>
+
 ---
 
-### 4. Handler `start`/`help` non `await`-ano la reply → possibili unhandled rejection
-**File:** [src/index.ts:325-329](src/index.ts#L325-L329) e [src/index.ts:331-357](src/index.ts#L331-L357)
+### 4. Handler `start`/`help` non `await`-ano la reply → possibili unhandled rejection ✅ risolto
+**File:** [src/index.ts:342-346](src/index.ts#L342-L346) e [src/index.ts:348-374](src/index.ts#L348-L374)
+
+**Fix applicato:** aggiunto `return` davanti a `ctx.reply(...)` in entrambi gli handler, così la promise viene propagata a grammY e un eventuale rejection finisce in `bot.catch`.
+
+<details>
+<summary>Descrizione originale del problema</summary>
 
 ```ts
 bot.command("start", (ctx) => {
@@ -86,6 +98,8 @@ bot.command("start", (ctx) => {
 Il corpo è un blocco `{ }` che **non ritorna** la promise di `ctx.reply`. grammY quindi non la attende e, se la reply fallisce (rete, utente che ha bloccato il bot, ecc.), il rejection **sfugge a `bot.catch`** ([src/index.ts:305](src/index.ts#L305)) e diventa un unhandled promise rejection. Tutti gli altri handler usano `async/await` correttamente; questi due sono l'eccezione.
 
 **Fix consigliato:** `return ctx.reply(...)` oppure rendere gli handler `async` con `await`.
+
+</details>
 
 ---
 
@@ -160,8 +174,8 @@ C'è uno spazio in coda dopo il `+` di concatenazione (innocuo) e mancano nell'e
 |---|----------|---------|-----------|
 | 1 | `callback_data` > 64 byte | ✅ Risolto | Medio |
 | 2 | Webhook secret opzionale | ✅ Risolto | Basso |
-| 3 | Scrittura store non atomica | 🟠 Media | Basso |
-| 4 | `start`/`help` non awaited | 🟠 Media | Basso |
+| 3 | Scrittura store non atomica | ✅ Risolto | Basso |
+| 4 | `start`/`help` non awaited | ✅ Risolto | Basso |
 | 5 | Offset UTC stale (DST) | 🟠 Media | Medio |
 | 6 | Refresh perde admin1/country | 🟠 Media | Medio (lega a #1) |
 | 7 | Cache stampede | 🟡 Bassa | Medio |
