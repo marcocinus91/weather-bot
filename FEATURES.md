@@ -13,7 +13,7 @@ Checklist da aggiornare ad ogni feature completata.
 - [x] 4. Panoramica giornata (miglioramenti)
 - [x] 5. Alert mattutino
 - [x] 6. Meteo settimanale
-- [ ] 7. Modalità runner
+- [x] 7. Modalità runner
 - [ ] 8. Feedback previsione
 
 ---
@@ -65,6 +65,7 @@ export interface UserPrefs { cityName, cityAdmin1, cityCountry, lat, lon, utcOff
 - `/stopalert` — disattiva l'alert
 - `/myalert` — mostra l'orario dell'alert impostato
 - `/settimana [città]` — panoramica meteo dei prossimi giorni
+- `/corsa [città] [HH:MM]` — trova la fascia migliore per correre nelle prossime 12 ore, oppure analizza un orario specifico
 
 ### Pattern risposta attuale
 Risposte in MarkdownV2 con escape sistematico (`escapeMarkdownV2()`), bottoni inline `🔄 Aggiorna` / `📍 Cambia città` su tutti i report meteo.
@@ -194,30 +195,19 @@ interface UserPrefs {
 
 ---
 
-### 7. Modalità runner
+### 7. Modalità runner ✅
 
 **Obiettivo:** comando dedicato per chi vuole sapere la fascia oraria migliore per correre.
 
-> Nota: feature di nicchia (utile solo a chi corre regolarmente), ma a basso costo di implementazione perché riusa `getRunningAdvice()` e `HourlySnapshot[]` già esistenti. Per questo è stata spostata dopo le feature a beneficio più ampio (alert, meteo settimanale).
-
-**Comando da aggiungere:**
-- `/corsa <città> [orario]` — analizza le condizioni per correre
-  - senza orario: trova la fascia oraria migliore nelle prossime 12 ore
+**Comando implementato:**
+- `/corsa [città] [HH:MM]` — analizza le condizioni per correre (città indicata, o città preferita se omessa)
+  - senza orario: trova la fascia migliore nelle prossime 12 ore
   - con orario (es. `/corsa Cagliari 18:00`): analizza quella fascia specifica
 
-**Implementazione suggerita:**
-- Aggiungere handler `bot.command("corsa", ...)` in `index.ts`.
-- Logica "fascia migliore" in `src/decision.ts`:
-```typescript
-export function getBestRunningWindow(hourly: HourlySnapshot[]): HourlySnapshot | null
-```
-  - Filtra le ore con `getRunningAdvice()` che restituisce `recommended: true`.
-  - Tra quelle, sceglie la più fresca (temperatura più bassa) e con meno vento.
-- Output dedicato più dettagliato rispetto alla risposta standard: temperatura, vento, probabilità pioggia per la fascia consigliata, confronto con le ore adiacenti.
-
-**Note:**
-- Usare `HourlySnapshot[]` già disponibile in `WeatherData.hourly`.
-- Aggiornare `/help` con il nuovo comando.
+**Implementazione:**
+- `getBestRunningWindow()` in `decision.ts`: tra le ore raccomandate da `getRunningAdvice()` nelle prossime 12 ore, filtra prima quelle in "ore ragionevoli" (6:00–22:00, fallback a tutte le raccomandate se nessuna rientra), poi scegli per probabilità di pioggia più bassa, poi per temperatura più vicina a 16°C, infine per vento più basso.
+- `formatRunningReport()` in `index.ts`: senza orario mostra la fascia migliore (o un messaggio se nessuna è ideale, con le condizioni attuali); con orario mostra dettaglio della fascia richiesta (verdetto + motivo) e confronto con le ore adiacenti, con nota se l'orario richiesto viene arrotondato all'ora.
+- Comando riusa `resolveLocation()` e `ALERT_TIME_REGEX` per il parsing di città/orario opzionali.
 
 ---
 
@@ -252,5 +242,5 @@ export function getBestRunningWindow(hourly: HourlySnapshot[]): HourlySnapshot |
 5. ~~Panoramica giornata~~ ✅
 6. ~~Alert mattutino~~ ✅
 7. ~~Meteo settimanale~~ ✅
-8. **Modalità runner** — niche, basso costo, riusa logica esistente.
+8. ~~Modalità runner~~ ✅
 9. **Feedback** — riusa la `InlineKeyboard` del punto 2, scope ridotto a meteo corrente.

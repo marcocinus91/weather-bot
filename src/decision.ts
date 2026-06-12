@@ -287,3 +287,30 @@ export function getWeeklyOverview(hourly: HourlySnapshot[]): WeeklyDayForecast[]
     precipitationProbability: Math.max(...hours.map((h) => h.precipitationProbability)),
   }));
 }
+
+const REASONABLE_HOURS: [number, number] = [6, 22];
+const IDEAL_RUNNING_TEMP = 16;
+
+export function getBestRunningWindow(hourly: HourlySnapshot[]): HourlySnapshot | null {
+  const window = hourly.slice(0, 12);
+  const recommended = window.filter((h) => getRunningAdvice(h).recommended);
+  if (recommended.length === 0) return null;
+
+  const isReasonableHour = (h: HourlySnapshot) => {
+    const hour = Number(h.time.slice(11, 13));
+    return hour >= REASONABLE_HOURS[0] && hour <= REASONABLE_HOURS[1];
+  };
+
+  const candidates = recommended.filter(isReasonableHour);
+  const pool = candidates.length > 0 ? candidates : recommended;
+
+  return pool.reduce((best, h) => {
+    if (h.precipitationProbability !== best.precipitationProbability) {
+      return h.precipitationProbability < best.precipitationProbability ? h : best;
+    }
+    const hDist = Math.abs(h.temperature - IDEAL_RUNNING_TEMP);
+    const bestDist = Math.abs(best.temperature - IDEAL_RUNNING_TEMP);
+    if (hDist !== bestDist) return hDist < bestDist ? h : best;
+    return h.windSpeed < best.windSpeed ? h : best;
+  });
+}

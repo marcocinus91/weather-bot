@@ -24,6 +24,7 @@ import {
   PeriodForecast,
   getWeatherEmoji,
   getWeeklyOverview,
+  getBestRunningWindow,
 } from "./decision";
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 import { logger } from "./logger";
@@ -163,6 +164,91 @@ function formatWeeklyReport(location: Location, weather: WeatherData): string {
   );
 }
 
+function formatHourLabel(time: string, referenceDate: string): string {
+  const [date, clock] = time.split("T");
+  const hh = clock.slice(0, 2);
+  const dayLabel = date === referenceDate ? "oggi" : "domani";
+  return `${dayLabel} alle ${hh}:00`;
+}
+
+function formatRunningReport(
+  location: Location,
+  weather: WeatherData,
+  timeArg: string | null,
+): string {
+  const referenceDate = weather.hourly[0]?.time.split("T")[0] ?? "";
+
+  if (timeArg) {
+    const [hourStr, minuteStr] = timeArg.split(":");
+    const targetHour = Number(hourStr);
+    const index = weather.hourly.findIndex(
+      (h) => Number(h.time.slice(11, 13)) === targetHour,
+    );
+
+    if (index === -1) {
+      return (
+        `📍 ${formatLocation(location)} — modalità corsa\n\n` +
+        `Non ho previsioni disponibili per le ${escapeMarkdownV2(timeArg)}\\.`
+      );
+    }
+
+    const snapshot = weather.hourly[index];
+    const advice = getRunningAdvice(snapshot);
+    const label = formatHourLabel(snapshot.time, referenceDate);
+    const verdict = advice.recommended ? "✅ Sì, condizioni favorevoli" : "❌ Meglio evitare";
+
+    const lines = [
+      `📍 ${formatLocation(location)} — modalità corsa`,
+      "",
+      `*${escapeMarkdownV2(label)}*: ${getWeatherEmoji(snapshot.weatherCode)} ${escapeMarkdownV2(describeWeatherCode(snapshot.weatherCode))}`,
+      `🌡️ ${escapeMarkdownV2(String(snapshot.temperature))}°C — 💨 ${escapeMarkdownV2(String(snapshot.windSpeed))} km/h — 🌧️ ${escapeMarkdownV2(String(snapshot.precipitationProbability))}%`,
+      "",
+      `${verdict}: ${escapeMarkdownV2(advice.reason)}`,
+    ];
+
+    if (minuteStr !== "00") {
+      lines.push("", "ℹ️ Dati orari, arrotondati all'ora\\.");
+    }
+
+    const before = weather.hourly[index - 1];
+    const after = weather.hourly[index + 1];
+    if (before || after) {
+      lines.push("", "_Ore adiacenti:_");
+      if (before) {
+        lines.push(
+          `${escapeMarkdownV2(formatHourLabel(before.time, referenceDate))}: ${escapeMarkdownV2(String(before.temperature))}°C, 💨 ${escapeMarkdownV2(String(before.windSpeed))} km/h, 🌧️ ${escapeMarkdownV2(String(before.precipitationProbability))}%`,
+        );
+      }
+      if (after) {
+        lines.push(
+          `${escapeMarkdownV2(formatHourLabel(after.time, referenceDate))}: ${escapeMarkdownV2(String(after.temperature))}°C, 💨 ${escapeMarkdownV2(String(after.windSpeed))} km/h, 🌧️ ${escapeMarkdownV2(String(after.precipitationProbability))}%`,
+        );
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  const best = getBestRunningWindow(weather.hourly);
+
+  if (!best) {
+    const now = getRunningAdvice(weather.hourly[0]);
+    return (
+      `📍 ${formatLocation(location)} — modalità corsa\n\n` +
+      `⚠️ Nessuna fascia ideale nelle prossime 12 ore\\.\n` +
+      `Condizioni attuali: ${escapeMarkdownV2(now.reason)}\\.`
+    );
+  }
+
+  const label = formatHourLabel(best.time, referenceDate);
+  return (
+    `📍 ${formatLocation(location)} — modalità corsa\n\n` +
+    `🏃 Fascia migliore: *${escapeMarkdownV2(label)}*\n` +
+    `${getWeatherEmoji(best.weatherCode)} ${escapeMarkdownV2(describeWeatherCode(best.weatherCode))} — 🌡️ ${escapeMarkdownV2(String(best.temperature))}°C — 💨 ${escapeMarkdownV2(String(best.windSpeed))} km/h — 🌧️ ${escapeMarkdownV2(String(best.precipitationProbability))}%`
+  );
+}
+
+
 export function buildRefreshKeyboard(
   location: Location,
   kind: ReportKind,
@@ -261,7 +347,8 @@ bot.command("help", (ctx) => {
       "/alert <HH:MM> - attiva l'alert meteo giornaliero (panoramica della giornata)\n" +
       "/stopalert - disattiva l'alert\n" +
       "/myalert - mostra l'orario dell'alert impostato\n" +
-      "/settimana [città] - panoramica meteo dei prossimi giorni\n\n" +
+      "/settimana [città] - panoramica meteo dei prossimi giorni\n" +
+      "/corsa [città] [HH:MM] - trova la fascia migliore per correre\n\n" + 
       "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
       '  • "Milano stasera"\n' +
       '  • "Roma domani mattina"\n' +
@@ -434,6 +521,29 @@ bot.command("settimana", async (ctx) => {
     await replyWithWeatherError(ctx, error, cityArg || "città preferita");
   }
 });
+
+bot.command("corsa", async (ctx) => {
+  const raw = ctx.match.trim();
+  const parts = raw.length > 0 ? raw.split(/\s+/) : [];
+
+  let timeArg: string | null = null;
+  if (parts.length > 0 && ALERT_TIME_REGEX.test(parts[parts.length - 1])) {
+    timeArg = parts.pop()!;
+  }
+  const cityArg = parts.join(" ");
+
+  try {
+      const location = await resolveLocation(ctx, cityArg);
+      if (!location) return;
+
+      const weather = await getWeather(location.latitude, location.longitude);
+      await ctx.reply(formatRunningReport(location, weather, timeArg), {
+        parse_mode: "MarkdownV2",
+      });
+    } catch (error) {
+      await replyWithWeatherError(ctx, error, cityArg || "città preferita");
+    }
+})
 
 async function replyWithDayOverview(
   ctx: Context,
@@ -828,6 +938,7 @@ bot.api
     { command: "stopalert", description: "Disattiva l'alert" },
     { command: "myalert", description: "mostra l'orario dell'alert" },
     { command: "settimana", description: "Panoramica meteo dei prossimi giorni" },
+    { command: "corsa", description: "Trova la fascia migliore per correre" },
   ])
   .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 
