@@ -248,13 +248,20 @@ function formatRunningReport(
   );
 }
 
+const MAX_CALLBACK_NAME_LENGTH = 18;
+
+function truncateForCallback(name: string): string {
+  return name.length > MAX_CALLBACK_NAME_LENGTH
+    ? name.slice(0, MAX_CALLBACK_NAME_LENGTH)
+    : name;
+}
 
 export function buildRefreshKeyboard(
   location: Location,
   kind: ReportKind,
 ): InlineKeyboard {
   const coords = `${location.latitude.toFixed(4)},${location.longitude.toFixed(4)}`;
-  const name = location.name;
+  const name = truncateForCallback(location.name);
 
   let action: string;
   if (kind.type === "current") {
@@ -296,7 +303,17 @@ setInterval(() => {
   }
 }, RATE_LIMIT_WINDOW_MS);
 
-const bot = new Bot(process.env.BOT_TOKEN!);
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+if (!BOT_TOKEN) {
+  throw new Error("BOT_TOKEN non impostato. Imposta la variabile d'ambiente BOT_TOKEN.");
+}
+if (!WEBHOOK_SECRET) {
+  throw new Error("WEBHOOK_SECRET non impostato. Imposta la variabile d'ambiente WEBHOOK_SECRET.");
+}
+
+const bot = new Bot(BOT_TOKEN);
 
 startAlertScheduler(bot);
 
@@ -921,7 +938,7 @@ app.use(
   `/webhook`,
   webhookCallback(bot, "express", {
     timeoutMilliseconds: 25000,
-    secretToken: process.env.WEBHOOK_SECRET,
+    secretToken: WEBHOOK_SECRET,
   }),
 );
 
