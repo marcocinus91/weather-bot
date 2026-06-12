@@ -22,6 +22,7 @@ import {
   getPeriodForecast,
   getPeriodReliability,
   PeriodForecast,
+  getWeatherEmoji,
 } from "./decision";
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 import { logger } from "./logger";
@@ -100,22 +101,31 @@ function formatDayOverview(
   weather: WeatherData,
   dayOffset: DayOffset,
 ): string {
-  const lines = ALL_PERIODS.map((period) => {
-    const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
-    if (!forecast) return null;
+  const forecasts = ALL_PERIODS
+    .map((period) => ({ period, forecast: getPeriodForecast(weather.hourly, dayOffset, period) }))
+    .filter((f): f is { period: DayPeriod; forecast: PeriodForecast } => f.forecast !== null);
 
-    const { snapshot } = forecast;
-    const description = describeWeatherCode(snapshot.weatherCode);
-    const umbrella = getUmbrellaAdvice(snapshot);
-    return `• ${PERIOD_LABELS[period]}: ${escapeMarkdownV2(description)}, *${escapeMarkdownV2(String(snapshot.temperature))}°C* — ☂️ *${umbrella.needed ? "sì" : "no"}*`;
-  }).filter((line): line is string => line !== null);
-
-  if (lines.length === 0) {
+  if (forecasts.length === 0) {
     return `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]}"\\.`;
   }
 
-  return `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n${lines.join("\n")}`;
+  const lines = forecasts.map(({ period, forecast }) => {
+    const { snapshot } = forecast;
+    const description = describeWeatherCode(snapshot.weatherCode);
+    const umbrella = getUmbrellaAdvice(snapshot);
+    return `• ${PERIOD_LABELS[period]}: ${getWeatherEmoji(snapshot.weatherCode)} ${escapeMarkdownV2(description)}, *${escapeMarkdownV2(String(snapshot.temperature))}°C* — ☂️ *${umbrella.needed ? "sì" : "no"}*`;
+  });
+
+  const allHours = forecasts.flatMap(({ forecast }) => forecast.hours);
+  const reliability = getPeriodReliability(allHours);
+
+  return (
+    `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n` +
+    `${lines.join("\n")}\n\n` +
+    `📊 Affidabilità previsione: *${reliability.level}* — ${escapeMarkdownV2(reliability.reason)}`
+  );
 }
+
 
 function buildRefreshKeyboard(
   location: Location,
@@ -207,7 +217,9 @@ bot.command("help", (ctx) => {
       "/help — questo messaggio\n\n" +
       "/setcity <città> - imposta la tua città preferita\n" +
       "/meteo - meteo attuale della città preferita\n" +
-      "/mycity - mostra la città preferita impostata\n\n" +
+      "/mycity - mostra la città preferita impostata\n" +
+      "/oggi - panoramica meteo di oggi (città preferita)\n" +
+      "/domani - panoramica meteo di domani (città preferita)\n\n" +
       "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
       '  • "Milano stasera"\n' +
       '  • "Roma domani mattina"\n' +
@@ -292,6 +304,34 @@ bot.command("mycity", async (ctx) => {
 
   await ctx.reply(`La tua città preferita è: ${formatLocation(location)}`, { parse_mode: "MarkdownV2" });
 })
+
+bot.command("oggi", async (ctx) => {
+  await replyWithDayOverview(ctx, 0);
+});
+
+bot.command("domani", async (ctx) => {
+  await replyWithDayOverview(ctx, 1);
+});
+
+async function replyWithDayOverview(ctx: Context, dayOffset: DayOffset): Promise<void> {
+  const prefs = getUserPrefs(ctx.from!.id);
+  const location = prefs && locationFromPrefs(prefs);
+
+  if (!location) {
+    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    return;
+  }
+
+  try {
+    const weather = await getWeather(location.latitude, location.longitude);
+    await ctx.reply(formatDayOverview(location, weather, dayOffset), {
+      parse_mode: "MarkdownV2",
+      reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset }),
+    });
+  } catch (err) {
+    await replyWithWeatherError(ctx, err, location.name);
+  }
+}
 
 function formatLocation(loc: Location): string {
   return [loc.name, loc.admin1, loc.country]
@@ -646,6 +686,8 @@ bot.api
     { command: "setcity", description: "Imposta la città preferita" },
     { command: "meteo", description: "Meteo della città preferita"},
     { command: "mycity", description: "Mostra la città preferita" },
+    { command: "oggi", description: "Panoramica meteo di oggi" },
+    { command: "domani", description: "Panoramica meteo di domani" },
   ])
   .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 
