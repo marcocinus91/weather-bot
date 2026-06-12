@@ -37,3 +37,7 @@ export function setUserPrefs(userId: number, update: Partial<UserPrefs>): void {
   prefs.set(userId, { ...prefs.get(userId), ...update });
   saveToDisk();
 }
+
+export function getUserWithAlert(): [number, UserPrefs][] {
+  return [...prefs.entries()].filter(([, p]) => p.alertTime !== undefined);
+}

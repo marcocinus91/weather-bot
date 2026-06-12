@@ -96,7 +96,7 @@ function formatPeriodReport(
   );
 }
 
-function formatDayOverview(
+export function formatDayOverview(
   location: Location,
   weather: WeatherData,
   dayOffset: DayOffset,
@@ -127,7 +127,7 @@ function formatDayOverview(
 }
 
 
-function buildRefreshKeyboard(
+export function buildRefreshKeyboard(
   location: Location,
   kind: ReportKind,
 ): InlineKeyboard {
@@ -220,6 +220,9 @@ bot.command("help", (ctx) => {
       "/mycity - mostra la città preferita impostata\n" +
       "/oggi - panoramica meteo di oggi (città preferita)\n" +
       "/domani - panoramica meteo di domani (città preferita)\n\n" +
+      "/alert <HH:MM> - attiva l'alert meteo giornaliero (panoramica della giornata)\n" +
+      "/stopalert - disattiva l'alert\n" +
+      "/myalert - mostra l'orario dell'alert impostato\n\n" +
       "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
       '  • "Milano stasera"\n' +
       '  • "Roma domani mattina"\n' +
@@ -313,6 +316,49 @@ bot.command("domani", async (ctx) => {
   await replyWithDayOverview(ctx, 1);
 });
 
+const ALERT_TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+bot.command("alert", async (ctx) => {
+  const arg = ctx.match.trim();
+
+  if (!ALERT_TIME_REGEX.test(arg)) {
+    await ctx.reply("Usa /alert seguito dall'orario nel format HH:MM, es. /alert 07:30");
+    return;
+  }
+
+  const prefs = getUserPrefs(ctx.from!.id);
+  if (!prefs || prefs.utcOffsetSeconds === undefined) {
+    await ctx.reply("Devi prima impostare una città preferita con /setcity <città>.");
+    return;
+  }
+
+  setUserPrefs(ctx.from!.id, { alertTime: arg });
+  await ctx.reply(`Alert impostato per le ${arg} (ora locale di ${prefs.cityName}) ✅`);
+});
+
+bot.command("stopalert", async (ctx) => {
+  const prefs = getUserPrefs(ctx.from!.id);
+
+  if (!prefs?.alertTime) {
+    await ctx.reply("Non hai nessun alert attivo");
+    return;
+  }
+
+  setUserPrefs(ctx.from!.id, { alertTime: undefined });
+  await ctx.reply("Alert disattivato.");
+});
+
+bot.command("myalert", async (ctx) => {
+  const prefs = getUserPrefs(ctx.from!.id);
+
+  if (!prefs?.alertTime) {
+    await ctx.reply("Non hai nessun alert impostato. Usa /alert <HH:MM per attivarlo.");
+    return;
+  }
+
+  await ctx.reply(`Il tuo alert è impostato per le ${prefs.alertTime}.`)
+})
+
 async function replyWithDayOverview(ctx: Context, dayOffset: DayOffset): Promise<void> {
   const prefs = getUserPrefs(ctx.from!.id);
   const location = prefs && locationFromPrefs(prefs);
@@ -340,7 +386,7 @@ function formatLocation(loc: Location): string {
     .join(", ");
 }
 
-function locationFromPrefs(prefs: UserPrefs): Location | null {
+export function locationFromPrefs(prefs: UserPrefs): Location | null {
   if (prefs.lat === undefined || prefs.lon === undefined || !prefs.cityName) {
     return null;
   }
@@ -688,6 +734,9 @@ bot.api
     { command: "mycity", description: "Mostra la città preferita" },
     { command: "oggi", description: "Panoramica meteo di oggi" },
     { command: "domani", description: "Panoramica meteo di domani" },
+    { command: "alert", description: "Attiva l'alert meteo giornaliero" },
+    { command: "stopalert", description: "Disattiva l'alert" },
+    { command: "myalert", description: "mostra l'orario dell'alert" },
   ])
   .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 
