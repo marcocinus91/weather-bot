@@ -80,6 +80,7 @@ interface GeocodingResponse {
     longitude: number;
     country: string;
     admin1?: string;
+    population?: number;
   }[];
 }
 
@@ -89,6 +90,7 @@ export interface Location {
   country: string;
   latitude: number;
   longitude: number;
+  population?: number;
 }
 
 export interface GeocodingResult {
@@ -123,6 +125,7 @@ export async function getCoordinates(
     country: r.country,
     latitude: r.latitude,
     longitude: r.longitude,
+    population: r.population,
   });
 
   // Se l'utente ha indicato regione/paese, scegliamo il risultato che

@@ -313,12 +313,16 @@ function locationFromPrefs(prefs: UserPrefs): Location | null {
   };
 }
 
+const MIN_AMBIGUOUS_POPULATION = 1000;
+
 function findAmbiguousAlternatives(
   best: Location,
   alternatives: Location[],
 ): Location[] {
   return alternatives.filter(
-    (alt) => alt.country !== best.country || alt.admin1 !== best.admin1,
+    (alt) => 
+      (alt.country !== best.country || alt.admin1 !== best.admin1) &&
+      (alt.population ?? 0) >= MIN_AMBIGUOUS_POPULATION,
   );
 }
 
