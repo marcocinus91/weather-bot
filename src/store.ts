@@ -2,8 +2,9 @@ import fs from "fs";
 import path from "path";
 
 export interface UserPrefs {
-  city?: string;
-  cityDisplay?: string;
+  cityName?: string;
+  cityAdmin1?: string;
+  cityCountry?: string;
   lat?: number;
   lon?: number;
   utcOffsetSeconds?: number;

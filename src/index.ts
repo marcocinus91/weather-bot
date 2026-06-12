@@ -1,4 +1,10 @@
-import { Bot, GrammyError, InlineKeyboard, webhookCallback } from "grammy";
+import {
+  Bot,
+  Context,
+  GrammyError,
+  InlineKeyboard,
+  webhookCallback,
+} from "grammy";
 import express from "express";
 import "dotenv/config";
 import {
@@ -20,6 +26,7 @@ import {
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 import { logger } from "./logger";
 import { escapeMarkdownV2 } from "./format";
+import { getUserPrefs, setUserPrefs, UserPrefs } from "./store";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
@@ -31,8 +38,18 @@ const PERIOD_LABELS: Record<DayPeriod, string> = {
   notte: "notte",
 };
 const ALL_PERIODS: DayPeriod[] = ["mattina", "pomeriggio", "sera", "notte"];
-const PERIOD_CODES: Record<DayPeriod, string> = { mattina: "m", pomeriggio: "p", sera: "s", notte: "n" };
-const PERIOD_FROM_CODE: Record<string, DayPeriod> = { m: "mattina", p: "pomeriggio", s: "sera", n: "notte" };
+const PERIOD_CODES: Record<DayPeriod, string> = {
+  mattina: "m",
+  pomeriggio: "p",
+  sera: "s",
+  notte: "n",
+};
+const PERIOD_FROM_CODE: Record<string, DayPeriod> = {
+  m: "mattina",
+  p: "pomeriggio",
+  s: "sera",
+  n: "notte",
+};
 
 type ReportKind =
   | { type: "current" }
@@ -100,7 +117,10 @@ function formatDayOverview(
   return `📍 ${formatLocation(location)} — ${DAY_LABELS[dayOffset]}\n\n${lines.join("\n")}`;
 }
 
-function buildRefreshKeyboard(location: Location, kind: ReportKind): InlineKeyboard {
+function buildRefreshKeyboard(
+  location: Location,
+  kind: ReportKind,
+): InlineKeyboard {
   const coords = `${location.latitude.toFixed(4)},${location.longitude.toFixed(4)}`;
   const name = location.name;
 
@@ -185,6 +205,9 @@ bot.command("help", (ctx) => {
       "Comandi disponibili:\n" +
       "/start — messaggio di benvenuto\n" +
       "/help — questo messaggio\n\n" +
+      "/setcity <città> - imposta la tua città preferita\n" +
+      "/meteo - meteo attuale della città preferita\n" +
+      "/mycity - mostra la città preferita impostata\n\n" +
       "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
       '  • "Milano stasera"\n' +
       '  • "Roma domani mattina"\n' +
@@ -192,8 +215,102 @@ bot.command("help", (ctx) => {
   );
 });
 
+bot.command("setcity", async (ctx) => {
+  const cityArg = ctx.match.trim();
+
+  if (!cityArg) {
+    await ctx.reply("Usa /setcity seguito dal nome della città, es. /setcity Cagliari");
+    return;
+  }
+
+  try {
+    const geocoding = await getCoordinates(cityArg);
+
+    if (!geocoding) {
+      await ctx.reply(`Non ho trovato "${cityArg}". Controlla il nome e riprova.`);
+      return;
+    }
+
+    const { location, alternatives, disambiguated } = geocoding;
+    const ambiguous = disambiguated ? [] : findAmbiguousAlternatives(location, alternatives);
+
+    if (ambiguous.length > 0) {
+      const options = [location, ...ambiguous.slice(0, 2)]
+        .map((loc) => `• ${formatLocation(loc)}`)
+        .join("\n");
+
+      await ctx.reply(
+        `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
+        { parse_mode: "MarkdownV2" },
+      );
+      return;
+    }
+
+    const weather = await getWeather(location.latitude, location.longitude);
+
+    setUserPrefs(ctx.from!.id, {
+      cityName: location.name,
+      cityAdmin1: location.admin1,
+      cityCountry: location.country,
+      lat: location.latitude,
+      lon: location.longitude,
+      utcOffsetSeconds: weather.utcOffsetSeconds,
+    });
+
+    await ctx.reply(`Città preferita impostata: ${formatLocation(location)} ✅`, {
+      parse_mode: "MarkdownV2",
+    });
+  } catch (err) {
+    await replyWithWeatherError(ctx, err, cityArg);
+  }
+})
+
+bot.command("meteo", async (ctx) => {
+  const prefs = getUserPrefs(ctx.from!.id);
+  const location = prefs && locationFromPrefs(prefs);
+
+  if (!location) {
+    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    return;
+  }
+
+  try {
+    await replyWithCurrentWeather(ctx, location);
+  } catch (err) {
+    await replyWithWeatherError(ctx, err, location.name);
+  }
+});
+
+bot.command("mycity", async (ctx) => {
+  const prefs = getUserPrefs(ctx.from!.id);
+  const location = prefs && locationFromPrefs(prefs);
+
+  if (!location) {
+    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    return;
+  }
+
+  await ctx.reply(`La tua città preferita è: ${formatLocation(location)}`, { parse_mode: "MarkdownV2" });
+})
+
 function formatLocation(loc: Location): string {
-  return [loc.name, loc.admin1, loc.country].filter(Boolean).map((part) => escapeMarkdownV2(part as string)).join(", ");
+  return [loc.name, loc.admin1, loc.country]
+    .filter(Boolean)
+    .map((part) => escapeMarkdownV2(part as string))
+    .join(", ");
+}
+
+function locationFromPrefs(prefs: UserPrefs): Location | null {
+  if (prefs.lat === undefined || prefs.lon === undefined || !prefs.cityName) {
+    return null;
+  }
+  return {
+    name: prefs.cityName,
+    admin1: prefs.cityAdmin1,
+    country: prefs.cityCountry ?? "",
+    latitude: prefs.lat,
+    longitude: prefs.lon,
+  };
 }
 
 function findAmbiguousAlternatives(
@@ -222,34 +339,49 @@ bot.on("message:text", async (ctx) => {
 
   const { city, time } = parseTimeContext(text);
 
-  if (!city) {
-    await ctx.reply("Scrivimi il nome di una città per sapere che tempo fa.");
-    return;
-  }
-
   try {
-    const geocoding = await getCoordinates(city);
+    let location: Location;
 
-    if (!geocoding) {
-      await ctx.reply(`Non ho trovato "${city}". Controlla il nome e riprova.`);
-      return;
-    }
+    if (city) {
+      const geocoding = await getCoordinates(city);
 
-    const { location, alternatives, disambiguated } = geocoding;
-    const ambiguous = disambiguated
-      ? []
-      : findAmbiguousAlternatives(location, alternatives);
+      if (!geocoding) {
+        await ctx.reply(
+          `Non ho trovato "${city}". Controlla il nome e riprova.`,
+        );
+        return;
+      }
 
-    if (ambiguous.length > 0) {
-      const options = [location, ...ambiguous.slice(0, 2)]
-        .map((loc) => `• ${formatLocation(loc)}`)
-        .join("\n");
+      const { location: found, alternatives, disambiguated } = geocoding;
+      const ambiguous = disambiguated
+        ? []
+        : findAmbiguousAlternatives(found, alternatives);
 
-      await ctx.reply(
-        `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
-        { parse_mode: "MarkdownV2" },
-      );
-      return;
+      if (ambiguous.length > 0) {
+        const options = [found, ...ambiguous.slice(0, 2)]
+          .map((loc) => `• ${formatLocation(loc)}`)
+          .join("\n");
+
+        await ctx.reply(
+          `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
+          { parse_mode: "MarkdownV2" },
+        );
+        return;
+      }
+
+      location = found;
+    } else {
+      const prefs = getUserPrefs(ctx.from!.id);
+      const saved = prefs && locationFromPrefs(prefs);
+
+      if (!saved) {
+        await ctx.reply(
+          "Scrivimi il nome di una città per sapere che tempo fa, oppure impostane una predefinita con /setcity <città>.",
+        );
+        return;
+      }
+
+      location = saved;
     }
 
     const weather = await getWeather(location.latitude, location.longitude);
@@ -265,7 +397,10 @@ bot.on("message:text", async (ctx) => {
     if (!time.period) {
       await ctx.reply(formatDayOverview(location, weather, time.dayOffset), {
         parse_mode: "MarkdownV2",
-        reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset: time.dayOffset }),
+        reply_markup: buildRefreshKeyboard(location, {
+          type: "overview",
+          dayOffset: time.dayOffset,
+        }),
       });
       return;
     }
@@ -283,46 +418,77 @@ bot.on("message:text", async (ctx) => {
 
     await ctx.reply(formatPeriodReport(location, forecast, dayOffset, period), {
       parse_mode: "MarkdownV2",
-      reply_markup: buildRefreshKeyboard(location, { type: "period", dayOffset, period }),
+      reply_markup: buildRefreshKeyboard(location, {
+        type: "period",
+        dayOffset,
+        period,
+      }),
     });
-  } catch (err) {
-    logger.error(
-      { err, userId: ctx.from?.id, city },
-      "Errore nel recupero meteo",
-    );
-
-    if (err instanceof WeatherServiceError && err.code === "TIMEOUT") {
-      await ctx.reply(
-        "Il servizio meteo sta impiegando troppo tempo a rispondere. Riprova tra poco.",
-      );
-    } else if (
-      err instanceof WeatherServiceError &&
-      err.code === "RATE_LIMITED"
-    ) {
-      await ctx.reply(
-        "Il servizio meteo è momentaneamente sovraccarico. Riprova tra qualche minuto.",
-      );
-    } else if (err instanceof WeatherServiceError && err.code === "NETWORK") {
-      await ctx.reply(
-        "Il servizio meteo non è raggiungibile al momento. Riprova tra qualche minuto.",
-      );
-    } else {
-      await ctx.reply(
-        "Si è verificato un errore nel recuperare i dati meteo. Riprova tra poco.",
-      );
-    }
+  } catch (error) {
+    await replyWithWeatherError(ctx, error, city || "città preferita");
   }
 });
 
 function isNotModifiedError(err: unknown): boolean {
-  return err instanceof GrammyError && err.description.includes("message is not modified");
+  return (
+    err instanceof GrammyError &&
+    err.description.includes("message is not modified")
+  );
+}
+
+async function replyWithWeatherError(
+  ctx: Context,
+  err: unknown,
+  city: string,
+): Promise<void> {
+  logger.error(
+    { err, userId: ctx.from?.id, city },
+    "Errore nel recupero meteo",
+  );
+
+  if (err instanceof WeatherServiceError && err.code === "TIMEOUT") {
+    await ctx.reply(
+      "Il servizio meteo sta impiegando troppo tempo a rispondere. Riprova tra poco.",
+    );
+  } else if (
+    err instanceof WeatherServiceError &&
+    err.code === "RATE_LIMITED"
+  ) {
+    await ctx.reply(
+      "Il servizio meteo è momentaneamente sovraccarico. Riprova tra qualche minuto.",
+    );
+  } else if (err instanceof WeatherServiceError && err.code === "NETWORK") {
+    await ctx.reply(
+      "Il servizio meteo non è raggiungibile al momento. Riprova tra qualche minuto.",
+    );
+  } else {
+    await ctx.reply(
+      "Si è verificato un errore nel recuperare i dati meteo. Riprova tra poco.",
+    );
+  }
+}
+
+async function replyWithCurrentWeather(
+  ctx: Context,
+  location: Location,
+): Promise<void> {
+  const weather = await getWeather(location.latitude, location.longitude);
+  await ctx.reply(formatCurrentReport(location, weather), {
+    parse_mode: "MarkdownV2",
+    reply_markup: buildRefreshKeyboard(location, { type: "current" }),
+  });
 }
 
 bot.callbackQuery(/^r:c:(-?\d+\.\d+),(-?\d+\.\d+):(.+)$/, async (ctx) => {
   const [, latStr, lonStr, name] = ctx.match;
   const lat = Number(latStr);
   const lon = Number(lonStr);
-  const location: Location = { name, country: "", latitude: lat, longitude: lon };
+  const location: Location = {
+    name,
+    country: "",
+    latitude: lat,
+    longitude: lon,
+  };
 
   try {
     const weather = await getWeather(lat, lon);
@@ -336,53 +502,91 @@ bot.callbackQuery(/^r:c:(-?\d+\.\d+),(-?\d+\.\d+):(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       return;
     }
-    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh meteo corrente");
-    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
-  }
-});
-
-bot.callbackQuery(/^r:p:(-?\d+\.\d+),(-?\d+\.\d+):(\d)([mpsn]):(.+)$/, async (ctx) => {
-  const [, latStr, lonStr, dayOffsetStr, periodCode, name] = ctx.match;
-  const lat = Number(latStr);
-  const lon = Number(lonStr);
-  const dayOffset = Number(dayOffsetStr) as DayOffset;
-  const period = PERIOD_FROM_CODE[periodCode];
-  const location: Location = { name, country: "", latitude: lat, longitude: lon };
-
-  try {
-    const weather = await getWeather(lat, lon);
-    const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
-    if (!forecast) {
-      await ctx.answerCallbackQuery({ text: "Previsione non più disponibile.", show_alert: true });
-      return;
-    }
-    await ctx.editMessageText(formatPeriodReport(location, forecast, dayOffset, period), {
-      parse_mode: "MarkdownV2",
-      reply_markup: buildRefreshKeyboard(location, { type: "period", dayOffset, period }),
+    logger.error(
+      { err, userId: ctx.from?.id },
+      "Errore nel refresh meteo corrente",
+    );
+    await ctx.answerCallbackQuery({
+      text: "Errore nell'aggiornamento, riprova.",
+      show_alert: true,
     });
-    await ctx.answerCallbackQuery();
-  } catch (err) {
-    if (isNotModifiedError(err)) {
-      await ctx.answerCallbackQuery();
-      return;
-    }
-    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh meteo per fascia");
-    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
   }
 });
+
+bot.callbackQuery(
+  /^r:p:(-?\d+\.\d+),(-?\d+\.\d+):(\d)([mpsn]):(.+)$/,
+  async (ctx) => {
+    const [, latStr, lonStr, dayOffsetStr, periodCode, name] = ctx.match;
+    const lat = Number(latStr);
+    const lon = Number(lonStr);
+    const dayOffset = Number(dayOffsetStr) as DayOffset;
+    const period = PERIOD_FROM_CODE[periodCode];
+    const location: Location = {
+      name,
+      country: "",
+      latitude: lat,
+      longitude: lon,
+    };
+
+    try {
+      const weather = await getWeather(lat, lon);
+      const forecast = getPeriodForecast(weather.hourly, dayOffset, period);
+      if (!forecast) {
+        await ctx.answerCallbackQuery({
+          text: "Previsione non più disponibile.",
+          show_alert: true,
+        });
+        return;
+      }
+      await ctx.editMessageText(
+        formatPeriodReport(location, forecast, dayOffset, period),
+        {
+          parse_mode: "MarkdownV2",
+          reply_markup: buildRefreshKeyboard(location, {
+            type: "period",
+            dayOffset,
+            period,
+          }),
+        },
+      );
+      await ctx.answerCallbackQuery();
+    } catch (err) {
+      if (isNotModifiedError(err)) {
+        await ctx.answerCallbackQuery();
+        return;
+      }
+      logger.error(
+        { err, userId: ctx.from?.id },
+        "Errore nel refresh meteo per fascia",
+      );
+      await ctx.answerCallbackQuery({
+        text: "Errore nell'aggiornamento, riprova.",
+        show_alert: true,
+      });
+    }
+  },
+);
 
 bot.callbackQuery(/^r:o:(-?\d+\.\d+),(-?\d+\.\d+):(\d):(.+)$/, async (ctx) => {
   const [, latStr, lonStr, dayOffsetStr, name] = ctx.match;
   const lat = Number(latStr);
   const lon = Number(lonStr);
   const dayOffset = Number(dayOffsetStr) as DayOffset;
-  const location: Location = { name, country: "", latitude: lat, longitude: lon };
+  const location: Location = {
+    name,
+    country: "",
+    latitude: lat,
+    longitude: lon,
+  };
 
   try {
     const weather = await getWeather(lat, lon);
     await ctx.editMessageText(formatDayOverview(location, weather, dayOffset), {
       parse_mode: "MarkdownV2",
-      reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset }),
+      reply_markup: buildRefreshKeyboard(location, {
+        type: "overview",
+        dayOffset,
+      }),
     });
     await ctx.answerCallbackQuery();
   } catch (err) {
@@ -390,8 +594,14 @@ bot.callbackQuery(/^r:o:(-?\d+\.\d+),(-?\d+\.\d+):(\d):(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery();
       return;
     }
-    logger.error({ err, userId: ctx.from?.id }, "Errore nel refresh panoramica giornata");
-    await ctx.answerCallbackQuery({ text: "Errore nell'aggiornamento, riprova.", show_alert: true });
+    logger.error(
+      { err, userId: ctx.from?.id },
+      "Errore nel refresh panoramica giornata",
+    );
+    await ctx.answerCallbackQuery({
+      text: "Errore nell'aggiornamento, riprova.",
+      show_alert: true,
+    });
   }
 });
 
@@ -429,10 +639,13 @@ bot.api
   .setMyCommands([
     { command: "start", description: "Messaggio di benvenuto" },
     { command: "help", description: "Cosa posso fare" },
+    { command: "setcity", description: "Imposta la città preferita" },
+    { command: "meteo", description: "Meteo della città preferita"},
+    { command: "mycity", description: "Mostra la città preferita" },
   ])
   .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  logger.info({ port: PORT }, "Server avviato")
+  logger.info({ port: PORT }, "Server avviato");
 });
