@@ -198,7 +198,7 @@ const WEATHER_CODE_SEVERITY: number[] = [
   0, // nuvoloso -> sereno
 ];
 
-function pickWorstWeatherCode(codes: number[]): number {
+export function pickWorstWeatherCode(codes: number[]): number {
     for (const code of WEATHER_CODE_SEVERITY) {
         if (codes.includes(code)) return code;
     }
@@ -261,4 +261,29 @@ export function getWeatherEmoji(code: number): string {
   if ([95, 96, 99].includes(code)) return "⛈️";
   return "🌡️";
 }
+export interface WeeklyDayForecast {
+  date: string;
+  tempMin: number;
+  tempMax: number;
+  weatherCode: number;
+  precipitationProbability: number;
+}
 
+export function getWeeklyOverview(hourly: HourlySnapshot[]): WeeklyDayForecast[] {
+  const byDate = new Map<string, HourlySnapshot[]>();
+
+  for (const h of hourly) {
+    const date = h.time.split("T")[0];
+    const hours = byDate.get(date) ?? [];
+    hours.push(h);
+    byDate.set(date, hours);
+  }
+
+  return [...byDate.entries()].map(([date, hours]) => ({
+    date,
+    tempMin: Math.min(...hours.map((h) => h.temperature)),
+    tempMax: Math.max(...hours.map((h) => h.temperature)),
+    weatherCode: pickWorstWeatherCode(hours.map((h) => h.weatherCode)),
+    precipitationProbability: Math.max(...hours.map((h) => h.precipitationProbability)),
+  }));
+}

@@ -209,7 +209,7 @@ export async function getWeather(
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&current=temperature_2m,precipitation,weathercode,windspeed_10m` +
     `&hourly=temperature_2m,precipitation,precipitation_probability,weathercode,windspeed_10m` +
-    `&timezone=auto&forecast_days=2`;
+    `&timezone=auto&forecast_days=7`;
 
   const data = await getJson<ForecastResponse>(url);
 
@@ -273,7 +273,7 @@ function createCache<T>(ttlMs: number) {
 }
 
 const GEOCODING_TTL_MS = 24 * 60 * 60 * 1000;
-const FORECAST_TTL_MS = 10 * 60 * 1000;
+const FORECAST_TTL_MS = 30 * 60 * 1000;
 
 const geocodingCache = createCache<GeocodingResult>(GEOCODING_TTL_MS);
 const forecastCache = createCache<WeatherData>(FORECAST_TTL_MS);

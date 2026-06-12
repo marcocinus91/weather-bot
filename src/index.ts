@@ -23,11 +23,13 @@ import {
   getPeriodReliability,
   PeriodForecast,
   getWeatherEmoji,
+  getWeeklyOverview,
 } from "./decision";
 import { parseTimeContext, DayOffset, DayPeriod } from "./time";
 import { logger } from "./logger";
 import { escapeMarkdownV2 } from "./format";
 import { getUserPrefs, setUserPrefs, UserPrefs } from "./store";
+import { startAlertScheduler } from "./scheduler";
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
@@ -101,9 +103,13 @@ export function formatDayOverview(
   weather: WeatherData,
   dayOffset: DayOffset,
 ): string {
-  const forecasts = ALL_PERIODS
-    .map((period) => ({ period, forecast: getPeriodForecast(weather.hourly, dayOffset, period) }))
-    .filter((f): f is { period: DayPeriod; forecast: PeriodForecast } => f.forecast !== null);
+  const forecasts = ALL_PERIODS.map((period) => ({
+    period,
+    forecast: getPeriodForecast(weather.hourly, dayOffset, period),
+  })).filter(
+    (f): f is { period: DayPeriod; forecast: PeriodForecast } =>
+      f.forecast !== null,
+  );
 
   if (forecasts.length === 0) {
     return `Non ho previsioni disponibili per "${DAY_LABELS[dayOffset]}"\\.`;
@@ -126,6 +132,36 @@ export function formatDayOverview(
   );
 }
 
+const WEEKDAY_LABELS = [
+  "domenica",
+  "lunedì",
+  "martedì",
+  "mercoledì",
+  "giovedì",
+  "venerdì",
+  "sabato",
+];
+
+function formatWeeklyReport(location: Location, weather: WeatherData): string {
+  const days = getWeeklyOverview(weather.hourly);
+
+  const lines = days.map((day, i) => {
+    const label =
+      i === 0
+        ? "oggi"
+        : i === 1
+          ? "domani"
+          : WEEKDAY_LABELS[new Date(`${day.date}T00:00:00Z`).getUTCDay()];
+    const description = describeWeatherCode(day.weatherCode);
+    return `• ${label}: ${getWeatherEmoji(day.weatherCode)} ${escapeMarkdownV2(description)}, *${escapeMarkdownV2(String(day.tempMin))}°C / ${escapeMarkdownV2(String(day.tempMax))}°C* — 🌧️ ${escapeMarkdownV2(String(day.precipitationProbability))}%`;
+  });
+
+  return (
+    `📍 ${formatLocation(location)} — prossimi giorni\n\n` +
+    `${lines.join("\n")}\n\n` +
+    `⚠️ Affidabilità bassa oltre i 2\\-3 giorni\\.`
+  );
+}
 
 export function buildRefreshKeyboard(
   location: Location,
@@ -176,6 +212,8 @@ setInterval(() => {
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 
+startAlertScheduler(bot);
+
 // Gestore di errori globale: cattura tutto ciò che sfugge ai try/catch
 // nei singoli handler, evitando unhandled rejection / crash del processo.
 bot.catch((err) => {
@@ -222,7 +260,8 @@ bot.command("help", (ctx) => {
       "/domani - panoramica meteo di domani (città preferita)\n\n" +
       "/alert <HH:MM> - attiva l'alert meteo giornaliero (panoramica della giornata)\n" +
       "/stopalert - disattiva l'alert\n" +
-      "/myalert - mostra l'orario dell'alert impostato\n\n" +
+      "/myalert - mostra l'orario dell'alert impostato\n" +
+      "/settimana [città] - panoramica meteo dei prossimi giorni\n\n" +
       "📅 Puoi anche chiedere il meteo per un altro momento, es.:\n" +
       '  • "Milano stasera"\n' +
       '  • "Roma domani mattina"\n' +
@@ -234,7 +273,9 @@ bot.command("setcity", async (ctx) => {
   const cityArg = ctx.match.trim();
 
   if (!cityArg) {
-    await ctx.reply("Usa /setcity seguito dal nome della città, es. /setcity Cagliari");
+    await ctx.reply(
+      "Usa /setcity seguito dal nome della città, es. /setcity Cagliari",
+    );
     return;
   }
 
@@ -242,12 +283,16 @@ bot.command("setcity", async (ctx) => {
     const geocoding = await getCoordinates(cityArg);
 
     if (!geocoding) {
-      await ctx.reply(`Non ho trovato "${cityArg}". Controlla il nome e riprova.`);
+      await ctx.reply(
+        `Non ho trovato "${cityArg}". Controlla il nome e riprova.`,
+      );
       return;
     }
 
     const { location, alternatives, disambiguated } = geocoding;
-    const ambiguous = disambiguated ? [] : findAmbiguousAlternatives(location, alternatives);
+    const ambiguous = disambiguated
+      ? []
+      : findAmbiguousAlternatives(location, alternatives);
 
     if (ambiguous.length > 0) {
       const options = [location, ...ambiguous.slice(0, 2)]
@@ -272,20 +317,25 @@ bot.command("setcity", async (ctx) => {
       utcOffsetSeconds: weather.utcOffsetSeconds,
     });
 
-    await ctx.reply(`Città preferita impostata: ${formatLocation(location)} ✅`, {
-      parse_mode: "MarkdownV2",
-    });
+    await ctx.reply(
+      `Città preferita impostata: ${formatLocation(location)} ✅`,
+      {
+        parse_mode: "MarkdownV2",
+      },
+    );
   } catch (err) {
     await replyWithWeatherError(ctx, err, cityArg);
   }
-})
+});
 
 bot.command("meteo", async (ctx) => {
   const prefs = getUserPrefs(ctx.from!.id);
   const location = prefs && locationFromPrefs(prefs);
 
   if (!location) {
-    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    await ctx.reply(
+      "Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.",
+    );
     return;
   }
 
@@ -301,12 +351,16 @@ bot.command("mycity", async (ctx) => {
   const location = prefs && locationFromPrefs(prefs);
 
   if (!location) {
-    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    await ctx.reply(
+      "Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.",
+    );
     return;
   }
 
-  await ctx.reply(`La tua città preferita è: ${formatLocation(location)}`, { parse_mode: "MarkdownV2" });
-})
+  await ctx.reply(`La tua città preferita è: ${formatLocation(location)}`, {
+    parse_mode: "MarkdownV2",
+  });
+});
 
 bot.command("oggi", async (ctx) => {
   await replyWithDayOverview(ctx, 0);
@@ -322,18 +376,24 @@ bot.command("alert", async (ctx) => {
   const arg = ctx.match.trim();
 
   if (!ALERT_TIME_REGEX.test(arg)) {
-    await ctx.reply("Usa /alert seguito dall'orario nel format HH:MM, es. /alert 07:30");
+    await ctx.reply(
+      "Usa /alert seguito dall'orario nel formato HH:MM, es. /alert 07:30",
+    );
     return;
   }
 
   const prefs = getUserPrefs(ctx.from!.id);
   if (!prefs || prefs.utcOffsetSeconds === undefined) {
-    await ctx.reply("Devi prima impostare una città preferita con /setcity <città>.");
+    await ctx.reply(
+      "Devi prima impostare una città preferita con /setcity <città>.",
+    );
     return;
   }
 
   setUserPrefs(ctx.from!.id, { alertTime: arg });
-  await ctx.reply(`Alert impostato per le ${arg} (ora locale di ${prefs.cityName}) ✅`);
+  await ctx.reply(
+    `Alert impostato per le ${arg} (ora locale di ${prefs.cityName}) ✅`,
+  );
 });
 
 bot.command("stopalert", async (ctx) => {
@@ -352,19 +412,40 @@ bot.command("myalert", async (ctx) => {
   const prefs = getUserPrefs(ctx.from!.id);
 
   if (!prefs?.alertTime) {
-    await ctx.reply("Non hai nessun alert impostato. Usa /alert <HH:MM per attivarlo.");
+    await ctx.reply(
+      "Non hai nessun alert impostato. Usa /alert <HH:MM> per attivarlo.",
+    );
     return;
   }
 
-  await ctx.reply(`Il tuo alert è impostato per le ${prefs.alertTime}.`)
-})
+  await ctx.reply(`Il tuo alert è impostato per le ${prefs.alertTime}.`);
+});
 
-async function replyWithDayOverview(ctx: Context, dayOffset: DayOffset): Promise<void> {
+bot.command("settimana", async (ctx) => {
+  const cityArg = ctx.match.trim();
+
+  try {
+    const location = await resolveLocation(ctx, cityArg);
+    if (!location) return;
+
+    const weather = await getWeather(location.latitude, location.longitude);
+    await ctx.reply(formatWeeklyReport(location, weather), { parse_mode: "MarkdownV2" });
+  } catch (error) {
+    await replyWithWeatherError(ctx, error, cityArg || "città preferita");
+  }
+});
+
+async function replyWithDayOverview(
+  ctx: Context,
+  dayOffset: DayOffset,
+): Promise<void> {
   const prefs = getUserPrefs(ctx.from!.id);
   const location = prefs && locationFromPrefs(prefs);
 
   if (!location) {
-    await ctx.reply("Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.");
+    await ctx.reply(
+      "Non hai ancora impostato una città preferita. Usa /setcity <città> per impostarla.",
+    );
     return;
   }
 
@@ -372,7 +453,10 @@ async function replyWithDayOverview(ctx: Context, dayOffset: DayOffset): Promise
     const weather = await getWeather(location.latitude, location.longitude);
     await ctx.reply(formatDayOverview(location, weather, dayOffset), {
       parse_mode: "MarkdownV2",
-      reply_markup: buildRefreshKeyboard(location, { type: "overview", dayOffset }),
+      reply_markup: buildRefreshKeyboard(location, {
+        type: "overview",
+        dayOffset,
+      }),
     });
   } catch (err) {
     await replyWithWeatherError(ctx, err, location.name);
@@ -406,10 +490,57 @@ function findAmbiguousAlternatives(
   alternatives: Location[],
 ): Location[] {
   return alternatives.filter(
-    (alt) => 
+    (alt) =>
       (alt.country !== best.country || alt.admin1 !== best.admin1) &&
       (alt.population ?? 0) >= MIN_AMBIGUOUS_POPULATION,
   );
+}
+
+async function resolveLocation(
+  ctx: Context,
+  cityArg: string,
+): Promise<Location | null> {
+  if (cityArg) {
+    const geocoding = await getCoordinates(cityArg);
+
+    if (!geocoding) {
+      await ctx.reply(
+        `Non ho trovato "${cityArg}". Controlla il nome e riprova.`,
+      );
+      return null;
+    }
+
+    const { location: found, alternatives, disambiguated } = geocoding;
+    const ambiguous = disambiguated
+      ? []
+      : findAmbiguousAlternatives(found, alternatives);
+
+    if (ambiguous.length > 0) {
+      const options = [found, ...ambiguous.slice(0, 2)]
+        .map((loc) => `• ${formatLocation(loc)}`)
+        .join("\n");
+
+      await ctx.reply(
+        `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
+        { parse_mode: "MarkdownV2" },
+      );
+      return null;
+    }
+
+    return found;
+  }
+
+  const prefs = getUserPrefs(ctx.from!.id);
+  const saved = prefs && locationFromPrefs(prefs);
+
+  if (!saved) {
+    await ctx.reply(
+      "Scrivimi il nome di una città per sapere che tempo fa, oppure impostane una predefinita con /setcity <città>.",
+    );
+    return null;
+  }
+
+  return saved;
 }
 
 bot.on("message:text", async (ctx) => {
@@ -430,49 +561,8 @@ bot.on("message:text", async (ctx) => {
   const { city, time } = parseTimeContext(text);
 
   try {
-    let location: Location;
-
-    if (city) {
-      const geocoding = await getCoordinates(city);
-
-      if (!geocoding) {
-        await ctx.reply(
-          `Non ho trovato "${city}". Controlla il nome e riprova.`,
-        );
-        return;
-      }
-
-      const { location: found, alternatives, disambiguated } = geocoding;
-      const ambiguous = disambiguated
-        ? []
-        : findAmbiguousAlternatives(found, alternatives);
-
-      if (ambiguous.length > 0) {
-        const options = [found, ...ambiguous.slice(0, 2)]
-          .map((loc) => `• ${formatLocation(loc)}`)
-          .join("\n");
-
-        await ctx.reply(
-          `Ho trovato più città con questo nome\\. Specifica meglio \\(es\\. "Milano, Italia"\\):\n${options}`,
-          { parse_mode: "MarkdownV2" },
-        );
-        return;
-      }
-
-      location = found;
-    } else {
-      const prefs = getUserPrefs(ctx.from!.id);
-      const saved = prefs && locationFromPrefs(prefs);
-
-      if (!saved) {
-        await ctx.reply(
-          "Scrivimi il nome di una città per sapere che tempo fa, oppure impostane una predefinita con /setcity <città>.",
-        );
-        return;
-      }
-
-      location = saved;
-    }
+    const location = await resolveLocation(ctx, city ?? "");
+    if (!location) return;
 
     const weather = await getWeather(location.latitude, location.longitude);
 
@@ -730,13 +820,14 @@ bot.api
     { command: "start", description: "Messaggio di benvenuto" },
     { command: "help", description: "Cosa posso fare" },
     { command: "setcity", description: "Imposta la città preferita" },
-    { command: "meteo", description: "Meteo della città preferita"},
+    { command: "meteo", description: "Meteo della città preferita" },
     { command: "mycity", description: "Mostra la città preferita" },
     { command: "oggi", description: "Panoramica meteo di oggi" },
     { command: "domani", description: "Panoramica meteo di domani" },
     { command: "alert", description: "Attiva l'alert meteo giornaliero" },
     { command: "stopalert", description: "Disattiva l'alert" },
     { command: "myalert", description: "mostra l'orario dell'alert" },
+    { command: "settimana", description: "Panoramica meteo dei prossimi giorni" },
   ])
   .catch((err) => logger.error({ err }, "Errore setMyCommands"));
 

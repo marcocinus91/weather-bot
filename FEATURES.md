@@ -11,8 +11,8 @@ Checklist da aggiornare ad ogni feature completata.
 - [x] 2. Bottoni inline
 - [x] 3. Città preferita (`/setcity`, `/meteo`, `/mycity`)
 - [x] 4. Panoramica giornata (miglioramenti)
-- [ ] 5. Alert mattutino
-- [ ] 6. Meteo settimanale
+- [x] 5. Alert mattutino
+- [x] 6. Meteo settimanale
 - [ ] 7. Modalità runner
 - [ ] 8. Feedback previsione
 
@@ -61,6 +61,10 @@ export interface UserPrefs { cityName, cityAdmin1, cityCountry, lat, lon, utcOff
 - `/mycity` — mostra la città preferita
 - `/oggi` — panoramica meteo di oggi (città preferita)
 - `/domani` — panoramica meteo di domani (città preferita)
+- `/alert <HH:MM>` — attiva l'alert mattutino (panoramica di oggi all'orario indicato)
+- `/stopalert` — disattiva l'alert
+- `/myalert` — mostra l'orario dell'alert impostato
+- `/settimana [città]` — panoramica meteo dei prossimi giorni
 
 ### Pattern risposta attuale
 Risposte in MarkdownV2 con escape sistematico (`escapeMarkdownV2()`), bottoni inline `🔄 Aggiorna` / `📍 Cambia città` su tutti i report meteo.
@@ -155,46 +159,38 @@ interface UserPrefs {
 
 ---
 
-### 5. Alert mattutino
+### 5. Alert mattutino ✅
 
 **Obiettivo:** l'utente riceve automaticamente il meteo ogni mattina all'orario scelto.
 
-**Comandi da aggiungere:**
-- `/alert <HH:MM>` — attiva l'alert giornaliero all'orario specificato (es. `/alert 07:30`), riferito all'ora locale della città preferita
+**Comandi implementati:**
+- `/alert <HH:MM>` — attiva l'alert giornaliero all'orario specificato (es. `/alert 07:30`), riferito all'ora locale della città preferita; richiede `/setcity` già impostato
 - `/stopalert` — disattiva l'alert
 - `/myalert` — mostra l'orario attuale dell'alert
 
-**Implementazione suggerita:**
-- `UserPrefs` ha già `alertTime` e `utcOffsetSeconds` (decisione A/C).
-- Creare `src/scheduler.ts` con un interval ogni minuto che:
-  1. Per ogni utente con `alertTime` impostato, calcola l'ora locale come `new Date(Date.now() + utcOffsetSeconds * 1000)` e la confronta (HH:MM) con `alertTime`.
-  2. Per ogni match, chiama `getWeather()` e manda il report con `bot.api.sendMessage(userId, ...)`.
+**Implementazione:**
+- `src/scheduler.ts` esporta `startAlertScheduler(bot)`, avviato in `index.ts` subito dopo la creazione del bot.
+- Ogni 60s, per ogni utente con `alertTime` impostato (`getUsersWithAlert()` in `store.ts`), calcola l'ora locale (`Date.now() + utcOffsetSeconds * 1000`) e la confronta con `alertTime`; in caso di match invia `formatDayOverview()` (panoramica di oggi) via `bot.api.sendMessage()`.
+- Un `Map` interno (`sentToday`) evita invii duplicati nello stesso giorno.
 
 **Note:**
 - L'interval ogni minuto è semplice ma non preciso al secondo — accettabile per un alert mattutino.
-- Richiedere che l'utente abbia già impostato una città preferita (`/setcity`) prima di poter attivare l'alert (così `utcOffsetSeconds` è già disponibile).
 - L'offset UTC non viene ricalcolato automaticamente per il cambio ora legale — limite noto, accettabile per l'MVP.
-- Aggiornare `/help` con i nuovi comandi.
 
 ---
 
-### 6. Meteo settimanale
+### 6. Meteo settimanale ✅
 
-**Obiettivo:** panoramica dei prossimi 7 giorni.
+**Obiettivo:** panoramica dei prossimi giorni.
 
-**Comando da aggiungere:**
-- `/settimana <città>` — riassunto meteo per i prossimi 7 giorni
+**Comando implementato:**
+- `/settimana [città]` — riassunto meteo per i prossimi giorni (città indicata, o città preferita se omessa)
 
-**Implementazione suggerita:**
-- Modificare `getWeather()` in `weather.ts` per richiedere sempre `forecast_days=7` (non solo per `/settimana`), e lasciare che i consumer (`getPeriodForecast`, report corrente/fascia) continuino a usare solo le prime ore/il primo giorno come già fanno. Questo evita di avere due varianti di richiesta con cache key diverse.
-- Aggiornare `FORECAST_TTL_MS` a 30 minuti per riflettere la dimensione maggiore della risposta.
-- Creare funzione `getWeeklyOverview()` in `decision.ts` che aggrega i dati per giorno:
-  - Temperatura min/max
-  - Codice meteo predominante (usare `pickWorstWeatherCode()` già esistente)
-  - Probabilità pioggia massima
-
-**Note:**
-- L'affidabilità decresce significativamente oltre i 3 giorni — mostrare un disclaimer nel messaggio `/settimana`.
+**Implementazione:**
+- `getWeather()` richiede sempre `forecast_days=7`; `FORECAST_TTL_MS` portato a 30 minuti.
+- `getWeeklyOverview()` in `decision.ts` aggrega `HourlySnapshot[]` per giorno (temperatura min/max, codice meteo predominante via `pickWorstWeatherCode()`, probabilità pioggia massima).
+- `formatWeeklyReport()` in `index.ts` mostra una riga per giorno con emoji, min/max e probabilità pioggia, più disclaimer sull'affidabilità.
+- Nuovo helper `resolveLocation()` (città dal testo con gestione ambiguità, oppure fallback a città preferita), riusato anche dal refactor di `message:text`.
 
 ---
 
@@ -254,7 +250,7 @@ export function getBestRunningWindow(hourly: HourlySnapshot[]): HourlySnapshot |
 3. ~~Bottoni inline~~ ✅
 4. ~~Città preferita~~ ✅
 5. ~~Panoramica giornata~~ ✅
-6. **Alert mattutino** — dipende da città preferita (4) e da `utcOffsetSeconds` (C), richiede scheduler.
-7. **Meteo settimanale** — modifica a `weather.ts` (richiesta unica a 7 giorni) + nuova funzione in `decision.ts`.
+6. ~~Alert mattutino~~ ✅
+7. ~~Meteo settimanale~~ ✅
 8. **Modalità runner** — niche, basso costo, riusa logica esistente.
 9. **Feedback** — riusa la `InlineKeyboard` del punto 2, scope ridotto a meteo corrente.
